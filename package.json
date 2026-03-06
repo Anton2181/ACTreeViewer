@@ -10,7 +10,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "download-coas": "node scripts/download_coas.js"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",

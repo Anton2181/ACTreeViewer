@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { stratify, tree } from 'd3-hierarchy';
 import { useTheme } from '../ThemeContext';
 
@@ -85,7 +85,8 @@ const FamilyTree = ({ data }) => {
 
             // configure tree layout
             // Adjust nodeSize based on how big character cards will be
-            const treeLayout = tree().nodeSize([180, 250]);
+            // Width was increased from 180 to 220 to add padding between the wider cards
+            const treeLayout = tree().nodeSize([220, 250]);
             treeLayout(rootHierarchy);
             return rootHierarchy;
         } catch (e) {
@@ -98,25 +99,69 @@ const FamilyTree = ({ data }) => {
         return <div className="text-gray-400 p-8">No valid tree data found.</div>;
     }
 
-    // Calculate bounding box to center/zoom later
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    root.each(node => {
-        if (node.x < minX) minX = node.x;
-        if (node.x > maxX) maxX = node.x;
-        if (node.y < minY) minY = node.y;
-        if (node.y > maxY) maxY = node.y;
-    });
+    // Provide a massive canvas for free panning
+    const CANVAS_WIDTH = 20000;
+    const CANVAS_HEIGHT = 20000;
 
-    const width = Math.max(maxX - minX + 400, window.innerWidth);
-    const height = Math.max(maxY - minY + 400, window.innerHeight);
-    // Offset to center the bounding box
-    const offsetX = -minX + 200;
-    const offsetY = -minY + 200;
+    // Place the root node in the upper-middle of the canvas
+    const offsetX = CANVAS_WIDTH / 2;
+    const offsetY = 2000;
+
+    const containerRef = useRef(null);
+    const [isDragging, setIsDragging] = useState(false);
+    const [startX, setStartX] = useState(0);
+    const [startY, setStartY] = useState(0);
+
+    // Center the viewport on the root node on mount/data change
+    React.useEffect(() => {
+        if (containerRef.current) {
+            containerRef.current.scrollLeft = (CANVAS_WIDTH - window.innerWidth) / 2;
+            containerRef.current.scrollTop = offsetY - 100;
+        }
+    }, [root]);
+
+    const onPointerDown = (e) => {
+        setIsDragging(true);
+        setStartX(e.clientX);
+        setStartY(e.clientY);
+        if (containerRef.current) {
+            containerRef.current.style.cursor = 'grabbing';
+            containerRef.current.style.userSelect = 'none';
+        }
+    };
+
+    const onPointerMove = (e) => {
+        if (!isDragging || !containerRef.current) return;
+
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+
+        containerRef.current.scrollLeft -= dx;
+        containerRef.current.scrollTop -= dy;
+
+        setStartX(e.clientX);
+        setStartY(e.clientY);
+    };
+
+    const onPointerUp = () => {
+        setIsDragging(false);
+        if (containerRef.current) {
+            containerRef.current.style.cursor = 'grab';
+            containerRef.current.style.userSelect = 'auto';
+        }
+    };
 
     return (
-        <div className={`w-full h-full overflow-auto ${theme.bg} text-black absolute inset-0 custom-scrollbar transition-colors duration-500`}>
-            <svg width={width} height={height} className="mx-auto transform-origin-top-left transition-transform duration-500 border-none outline-none">
-                <g transform={`translate(${offsetX}, ${offsetY})`}>
+        <div
+            ref={containerRef}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerLeave={onPointerUp}
+            className={`w-full h-full overflow-auto ${theme.bg} text-black absolute inset-0 custom-scrollbar transition-colors duration-500 cursor-grab`}
+        >
+            <svg width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="mx-auto transform-origin-top-left transition-transform duration-500 border-none outline-none">
+                <g>
                     {/* Draw Links */}
                     {root.links().map((link, i) => {
                         // we don't draw links to the synthetic master root
@@ -127,10 +172,10 @@ const FamilyTree = ({ data }) => {
                                 className={`${theme.link} fill-none transition-all duration-300`}
                                 strokeWidth={2.5}
                                 d={`
-                  M ${link.source.x},${link.source.y + 60}
-                  C ${link.source.x},${(link.source.y + link.target.y) / 2}
-                    ${link.target.x},${(link.source.y + link.target.y) / 2}
-                    ${link.target.x},${link.target.y}
+                  M ${link.source.x + offsetX},${link.source.y + 60 + offsetY}
+                  C ${link.source.x + offsetX},${(link.source.y + link.target.y) / 2 + offsetY}
+                    ${link.target.x + offsetX},${(link.source.y + link.target.y) / 2 + offsetY}
+                    ${link.target.x + offsetX},${link.target.y + offsetY}
                 `}
                             />
                         );
@@ -141,36 +186,47 @@ const FamilyTree = ({ data }) => {
                         if (node.id === 'WORLD_ROOT') return null;
                         const data = node.data;
                         return (
-                            <g key={node.id} transform={`translate(${node.x},${node.y})`}>
-                                <foreignObject x="-75" y="0" width="150" height="100">
-                                    <div className={`w-full h-full p-2 bg-gradient-to-b ${theme.cardBg} border ${theme.border} rounded-xl shadow-2xl flex flex-col items-center justify-center text-center transition-all duration-300 hover:-translate-y-1 ${theme.hoverShadow} ${theme.hoverBorder} group relative overflow-hidden`}>
+                            <g key={node.id} transform={`translate(${node.x + offsetX},${node.y + offsetY})`}>
+                                <foreignObject x="-105" y="-15" width="210" height="130" style={{ overflow: 'visible' }}>
+                                    <div className="w-full h-full flex justify-center items-center">
+                                        <div className={`w-[180px] h-[100px] bg-gradient-to-b ${theme.cardBg} border ${theme.border} rounded-xl shadow-2xl flex flex-col items-center justify-center text-center transition-all duration-300 hover:-translate-y-1 ${theme.hoverShadow} ${theme.hoverBorder} group relative overflow-hidden cursor-pointer`}>
+                                            {/* Coat of Arms Background / Side Element */}
+                                            {data['House'] && (
+                                                <img
+                                                    src={`${import.meta.env.BASE_URL}coas/House_${data['House'].replace(/\s+/g, '_')}.svg`}
+                                                    alt={`${data['House']} Coat of Arms`}
+                                                    className="absolute -right-2 top-1/2 -translate-y-1/2 h-20 w-20 object-contain opacity-15 pointer-events-none"
+                                                    onError={(e) => { e.target.style.display = 'none'; }}
+                                                />
+                                            )}
 
-                                        {/* Gender-based Accent Line */}
-                                        <div className={`absolute left-0 top-0 bottom-0 w-1 ${data['Sex']?.toLowerCase().startsWith('f') ? 'bg-rose-400/60' :
+                                            {/* Gender-based Accent Line */}
+                                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${data['Sex']?.toLowerCase().startsWith('f') ? 'bg-rose-400/60' :
                                                 data['Sex']?.toLowerCase().startsWith('m') ? 'bg-blue-400/60' :
                                                     'bg-gray-400/60'
-                                            }`} />
+                                                }`} />
 
-                                        <h3 className={`${theme.textPrimary} font-serif font-bold text-sm leading-tight mb-1 transition-colors drop-shadow-sm z-10 pl-1`}>
-                                            {data['First Name']}
-                                            <span className={`block text-[11px] ${theme.textSecondary} font-normal uppercase tracking-widest mt-0.5`}>
-                                                {data['House']}
+                                            <h3 className={`${theme.textPrimary} font-serif font-bold text-sm leading-tight mb-1 transition-colors drop-shadow-sm z-10 pl-1`}>
+                                                {data['First Name']}
+                                                <span className={`block text-[11px] ${theme.textSecondary} font-normal uppercase tracking-widest mt-0.5`}>
+                                                    {data['House']}
+                                                </span>
+                                            </h3>
+
+                                            <div className={`w-8 h-px ${theme.border} my-1 z-10`}></div>
+
+                                            <p className="text-gray-600 text-[10px] grid grid-cols-2 gap-x-2 text-left w-full px-2 mt-1 z-10 pl-2">
+                                                <span className="text-gray-600 text-right font-medium">Born:</span>
+                                                <span className="text-gray-900 font-semibold">{data['Year of Birth'] || 'Unknown'}</span>
+
+                                                <span className="text-gray-600 text-right font-medium">Age:</span>
+                                                <span className="text-gray-900 font-semibold">{data['Age'] || '?'}</span>
+                                            </p>
+
+                                            <span className="absolute top-1 right-2 text-gray-400 text-[9px] font-mono opacity-80 z-10">
+                                                #{data.id}
                                             </span>
-                                        </h3>
-
-                                        <div className={`w-8 h-px ${theme.border} my-1 z-10`}></div>
-
-                                        <p className="text-gray-600 text-[10px] grid grid-cols-2 gap-x-2 text-left w-full px-2 mt-1 z-10 pl-2">
-                                            <span className="text-gray-600 text-right font-medium">Born:</span>
-                                            <span className="text-gray-900 font-semibold">{data['Year of Birth'] || 'Unknown'}</span>
-
-                                            <span className="text-gray-600 text-right font-medium">Age:</span>
-                                            <span className="text-gray-900 font-semibold">{data['Age'] || '?'}</span>
-                                        </p>
-
-                                        <span className="absolute top-1 right-2 text-gray-400 text-[9px] font-mono opacity-80 z-10">
-                                            #{data.id}
-                                        </span>
+                                        </div>
                                     </div>
                                 </foreignObject>
                             </g>

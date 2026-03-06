@@ -78,8 +78,8 @@ function App() {
             {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
           <div>
-            <h1 className={`text-2xl font-serif ${theme.textPrimary} font-bold tracking-wider`}>ASOIAF Chronicle</h1>
-            <p className="text-sm text-gray-600">Live Family Tree & Character Compendium</p>
+            <h1 className={`text-2xl font-serif ${theme.textPrimary} font-bold tracking-wider`}>AegonsConquest Character Chronicle</h1>
+            <p className="text-sm text-gray-600">[2026] Live Family Tree & Character Compendium</p>
           </div>
         </div>
         <div className="text-xs text-gray-700 font-mono flex items-center gap-2">
@@ -109,24 +109,7 @@ function App() {
             <h2 className={`text-xl font-serif ${theme.textPrimary}`}>Filters & Settings</h2>
           </div>
 
-          {/* Theme Selector */}
-          <div className="mb-8">
-            <h3 className={`text-sm font-bold uppercase tracking-wider ${theme.textSecondary} mb-3`}>Visual Theme</h3>
-            <div className="grid grid-cols-1 gap-2">
-              {allThemes.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setCurrentThemeId(t.id)}
-                  className={`p-2 text-sm text-left rounded border transition-all ${currentThemeId === t.id
-                    ? `${theme.border} bg-gray-100 shadow-inner ${theme.textPrimary} font-bold`
-                    : 'border-gray-300 text-gray-600 hover:border-gray-400 hover:bg-gray-50'
-                    }`}
-                >
-                  {t.name}
-                </button>
-              ))}
-            </div>
-          </div>
+
 
           {/* House Filter */}
           {houses.length > 0 && (
