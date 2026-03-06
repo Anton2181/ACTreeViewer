@@ -7,6 +7,7 @@ import { useTheme } from './ThemeContext';
 function App() {
   const { theme, currentThemeId, setCurrentThemeId, allThemes } = useTheme();
   const [data, setData] = useState([]);
+  const [currentYear, setCurrentYear] = useState('...');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -19,8 +20,9 @@ function App() {
     const loadData = async () => {
       try {
         const parsed = await fetchAndParseData();
-        console.log("Parsed Characters:", parsed);
-        setData(parsed);
+        console.log("Parsed Characters:", parsed.characters);
+        setData(parsed.characters);
+        setCurrentYear(parsed.year || 'Unknown');
       } catch (err) {
         setError(err.message);
       } finally {
@@ -79,7 +81,7 @@ function App() {
           </button>
           <div>
             <h1 className={`text-2xl font-serif ${theme.textPrimary} font-bold tracking-wider`}>AegonsConquest Character Chronicle</h1>
-            <p className="text-sm text-gray-600">[2026] Live Family Tree & Character Compendium</p>
+            <p className="text-sm text-gray-600">Current year is {currentYear}</p>
           </div>
         </div>
         <div className="text-xs text-gray-700 font-mono flex items-center gap-2">

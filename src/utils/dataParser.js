@@ -16,7 +16,15 @@ export const fetchAndParseData = async () => {
                 header: false, // Parse as arrays first to find the real header
                 skipEmptyLines: true,
                 complete: (results) => {
-                    resolve(processParsedData(results.data));
+                    const rawData = results.data;
+                    let currentYear = "Unknown";
+                    if (rawData.length > 0 && rawData[0][0] === 'Current Year:') {
+                        currentYear = rawData[0][1];
+                    }
+                    resolve({
+                        year: currentYear,
+                        characters: processParsedData(rawData)
+                    });
                 },
                 error: (error) => {
                     reject(error);
