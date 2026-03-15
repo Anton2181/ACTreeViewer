@@ -706,7 +706,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                                         const el = e.target;
                                                         if (!el.dataset.triedPng) {
                                                             el.dataset.triedPng = '1';
-                                                            el.setAttribute('href', `${import.meta.env.BASE_URL}coas/House_${data['House'].replace(/\s+/g, '_')}.png`);
+                                                            const fallbackPath = `${import.meta.env.BASE_URL}coas/House_${data['House'].replace(/\s+/g, '_')}.png`;
+                                                            el.setAttribute('href', fallbackPath);
+                                                            el.setAttribute('xlink:href', fallbackPath);
                                                         } else {
                                                             el.style.display = 'none';
                                                         }
