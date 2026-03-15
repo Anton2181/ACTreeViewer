@@ -15,6 +15,7 @@ function App() {
   // Filters
   const [selectedHouses, setSelectedHouses] = useState(new Set());
   const [selectedClaims, setSelectedClaims] = useState(new Set());
+  const [recenterTrigger, setRecenterTrigger] = useState(0);
 
   useEffect(() => {
     const loadData = async () => {
@@ -48,11 +49,56 @@ function App() {
   const filteredData = useMemo(() => {
     if (selectedHouses.size === 0 && selectedClaims.size === 0) return data;
 
-    return data.filter(char => {
+    // 1. Find direct matches
+    const directMatches = new Set(data.filter(char => {
       const houseMatch = selectedHouses.size === 0 || selectedHouses.has(char.House);
       const claimMatch = selectedClaims.size === 0 || selectedClaims.has(char.Claim);
       return houseMatch && claimMatch;
+    }));
+
+    // 2. Add parents and spouses of direct matches
+    const finalSet = new Set(directMatches);
+
+    // Quick lookup maps
+    const idToChar = new Map(data.map(d => [d.id.toString(), d]));
+    const nameToChar = new Map(data.filter(d => d['First Name']).map(d => [d['First Name'], d]));
+
+    directMatches.forEach(char => {
+      // Add Parents
+      if (char.FatherId && idToChar.has(char.FatherId.toString())) {
+        finalSet.add(idToChar.get(char.FatherId.toString()));
+      } else if (char.Father && nameToChar.has(char.Father)) {
+        finalSet.add(nameToChar.get(char.Father));
+      }
+
+      if (char.MotherId && idToChar.has(char.MotherId.toString())) {
+        finalSet.add(idToChar.get(char.MotherId.toString()));
+      } else if (char.Mother && nameToChar.has(char.Mother)) {
+        finalSet.add(nameToChar.get(char.Mother));
+      }
+
+      // Add Spouses (anyone who lists this char as a partner, or vice versa)
+      // Check if this char lists partners
+      if (char.Partners) {
+        const partnerNames = char.Partners.split(',').map(s => s.trim());
+        partnerNames.forEach(pName => {
+          if (nameToChar.has(pName)) finalSet.add(nameToChar.get(pName));
+        });
+      }
     });
+
+    // Also check if anyone else lists a directMatch as a partner
+    data.forEach(char => {
+      if (char.Partners) {
+        const partnerNames = char.Partners.split(',').map(s => s.trim());
+        const isPartnerOfMatch = Array.from(directMatches).some(match => partnerNames.includes(match['First Name']));
+        if (isPartnerOfMatch) {
+          finalSet.add(char);
+        }
+      }
+    });
+
+    return Array.from(finalSet);
   }, [data, selectedHouses, selectedClaims]);
 
   const toggleHouse = (house) => {
@@ -60,6 +106,7 @@ function App() {
     if (newSelected.has(house)) newSelected.delete(house);
     else newSelected.add(house);
     setSelectedHouses(newSelected);
+    setRecenterTrigger(prev => prev + 1);
   };
 
   const toggleClaim = (claim) => {
@@ -67,6 +114,7 @@ function App() {
     if (newSelected.has(claim)) newSelected.delete(claim);
     else newSelected.add(claim);
     setSelectedClaims(newSelected);
+    setRecenterTrigger(prev => prev + 1);
   };
 
   return (
@@ -109,11 +157,7 @@ function App() {
           <div className="flex items-center gap-2 mb-6">
             <Filter size={20} className={theme.textPrimary} />
             <h2 className={`text-xl font-serif ${theme.textPrimary}`}>Filters & Settings</h2>
-          </div>
-
-
-
-          {/* House Filter */}
+          </div>          {/* House Filter */}
           {houses.length > 0 && (
             <div className="mb-8">
               <h3 className={`text-sm font-bold uppercase tracking-wider ${theme.textSecondary} mb-3 flex justify-between items-center`}>
@@ -185,8 +229,30 @@ function App() {
           </div>
         )}
 
+        {/* Minimalist Active Filter Sidebar on Left */}
+        {(selectedHouses.size > 0 || selectedClaims.size > 0) && (
+          <div className="fixed top-[128px] left-4 z-10 flex flex-col gap-3 pointer-events-none">
+            {Array.from(selectedHouses).map(house => (
+              <div key={`active-house-${house}`} className="pointer-events-auto flex items-center gap-2 text-slate-800 hover:text-black transition-colors text-sm font-semibold drop-shadow-sm filter">
+                <button onClick={() => toggleHouse(house)} className="text-red-500 hover:text-red-600 transition-colors">
+                  <X size={20} />
+                </button>
+                <span className="tracking-wide">House {house}</span>
+              </div>
+            ))}
+            {Array.from(selectedClaims).map(claim => (
+              <div key={`active-claim-${claim}`} className="pointer-events-auto flex items-center gap-2 text-slate-800 hover:text-black transition-colors text-sm font-semibold drop-shadow-sm filter">
+                <button onClick={() => toggleClaim(claim)} className="text-red-500 hover:text-red-600 transition-colors">
+                  <X size={20} />
+                </button>
+                <span className="tracking-wide">Claim: {claim}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {!loading && !error && filteredData.length > 0 && (
-          <FamilyTree data={filteredData} />
+          <FamilyTree data={filteredData} allData={data} onFilterHouse={toggleHouse} recenterTrigger={recenterTrigger} />
         )}
 
         {!loading && !error && filteredData.length === 0 && (
