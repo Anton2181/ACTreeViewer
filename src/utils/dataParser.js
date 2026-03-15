@@ -1,7 +1,7 @@
 import Papa from 'papaparse';
 
 // Google Sheets CSV publish link
-const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1QpAlKSJKM2RfI47KnTf1M5lF-qBa5e8SrZV0vf1J2UU/export?format=csv&gid=2101836998";
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1WKSeqB1yX91A2TyD9Lie-mwNkc4qLIrN-pIPbX2knac/export?format=csv&gid=0";
 
 export const fetchAndParseData = async () => {
     try {
@@ -17,7 +17,7 @@ export const fetchAndParseData = async () => {
                 skipEmptyLines: true,
                 complete: (results) => {
                     const rawData = results.data;
-                    let currentYear = "Unknown";
+                    let currentYear = "94 DV";
                     if (rawData.length > 0 && rawData[0][0] === 'Current Year:') {
                         currentYear = rawData[0][1];
                     }
@@ -38,10 +38,10 @@ export const fetchAndParseData = async () => {
 };
 
 const processParsedData = (rawData) => {
-    // 1. Find the actual header row ("Character ID")
+    // 1. Find the actual header row ("Character ID (numeric)")
     let headerRowIndex = -1;
     for (let i = 0; i < Math.min(20, rawData.length); i++) {
-        if (rawData[i][0] === 'Character ID') {
+        if (rawData[i][0] === 'Character ID (numeric)' || rawData[i][0] === 'Character ID') {
             headerRowIndex = i;
             break;
         }
@@ -71,16 +71,12 @@ const processParsedData = (rawData) => {
     }
 
     // 2. Build Hierarchy
-    // D3 d3-hierarchy typically expects {id, parentId}. 
-    // For family trees, a character has a Father and Mother. We will need to normalize this.
-    // We'll create a primary id from 'Character ID'.
     const normalizedNodes = characters.map(char => {
-        // Find parent IDs based on names (since sheet gives parent names, not IDs)
-        // Actually, looking at the sheet, 'Father' and 'Mother' use character names: e.g. 'Aethan Velaryon'
         return {
             ...char,
-            id: char['Character ID'],
-            // We will resolve actual parent IDs later in the component or here
+            id: char['Character ID (numeric)'] || char['Character ID'],
+            FatherId: char['Father (ID)'],
+            MotherId: char['Mother (ID)']
         };
     });
 

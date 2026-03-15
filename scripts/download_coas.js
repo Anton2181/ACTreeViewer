@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Google Sheets CSV publish link
-const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1QpAlKSJKM2RfI47KnTf1M5lF-qBa5e8SrZV0vf1J2UU/export?format=csv&gid=2101836998";
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1WKSeqB1yX91A2TyD9Lie-mwNkc4qLIrN-pIPbX2knac/export?format=csv&gid=0";
 const COAS_DIR = path.join(__dirname, '../public/coas');
 
 async function downloadCoas() {
@@ -24,7 +24,7 @@ async function downloadCoas() {
                 const rawData = results.data;
                 let headerRowIndex = -1;
                 for (let i = 0; i < Math.min(20, rawData.length); i++) {
-                    if (rawData[i][0] === 'Character ID') {
+                    if (rawData[i][0] === 'Character ID (numeric)' || rawData[i][0] === 'Character ID') {
                         headerRowIndex = i;
                         break;
                     }
