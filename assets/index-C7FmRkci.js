@@ -20,7 +20,7 @@ Error generating stack: `+a.message+`
                   C ${lt},${(z.source.y+z.target.y)/2+I}
                     ${q},${(z.source.y+z.target.y)/2+I}
                     ${q},${z.target.y-65+I}
-                `},`link-${Y}`)}),R.descendants().map(z=>z.id==="WORLD_ROOT"?null:z.data.chars.map(Y=>{if(Y.id.toString()===z.data.TR.id.toString())return null;const H=Y.FatherId||Y.MotherId;if(!H)return null;const lt=ot[H.toString()];if(!lt)return null;const q=P[lt];if(!q)return null;const ft=K(q,Y)+it,ht=d(z.id,Y.id.toString())+it;return j.jsx("path",{className:"stroke-rose-400/60 fill-none transition-all duration-300",strokeWidth:1.5,strokeDasharray:"5,5",d:`
+                `},`link-${Y}`)}),R.descendants().map(z=>z.id==="WORLD_ROOT"?null:z.data.chars.map(Y=>{if(Y.id.toString()===z.data.TR.id.toString())return null;const H=Y.FatherId||Y.MotherId;if(!H)return null;const lt=ot[H.toString()];if(!lt)return null;const q=P[lt];if(!q)return null;const ft=K(q,Y)+it,ht=d(z.id,Y.id.toString())+it;return j.jsx("path",{className:`${x.link} fill-none transition-all duration-300`,strokeWidth:2.5,d:`
                       M ${ft},${q.y+65+I}
                       C ${ft},${(q.y+z.y)/2+I}
                         ${ht},${(q.y+z.y)/2+I}
