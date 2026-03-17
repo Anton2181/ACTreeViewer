@@ -484,7 +484,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     }, []);
 
     const onPointerDown = (e) => {
-        if (e.target.closest('button')) return;
+        // Don't pan if clicking a button, input, or any element marked with data-no-pan
+        if (e.target.closest('button') || e.target.closest('input') || e.target.closest('[data-no-pan]')) return;
 
         pointerDragRef.current = {
             isDragging: true,
@@ -774,6 +775,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
             <button
                 onClick={handleRecenter}
+                data-no-pan
                 className={`fixed bottom-8 right-8 p-4 rounded-full shadow-2xl border backdrop-blur-md transition-all duration-300 hover:scale-110 active:scale-95 z-50 flex items-center justify-center ${theme.cardBg} ${theme.border} ${theme.textPrimary}`}
                 title="Recenter Tree"
             >
@@ -785,6 +787,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             {/* Zoom Toggle Button */}
             <button
                 onClick={() => setIsZoomOpen(o => !o)}
+                data-no-pan
                 className={`fixed bottom-[104px] right-8 p-4 rounded-full shadow-2xl border backdrop-blur-md transition-all duration-300 hover:scale-110 active:scale-95 z-50 flex items-center justify-center ${isZoomOpen ? 'bg-blue-600 border-blue-400 text-white' : `${theme.cardBg} ${theme.border} ${theme.textPrimary}`}`}
                 title="Zoom"
             >
@@ -799,7 +802,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 <>
                     {/* Backdrop to close on outside click */}
                     <div className="fixed inset-0 z-40" onClick={() => setIsZoomOpen(false)} />
-                    <div className={`fixed bottom-[184px] right-8 z-50 flex flex-col items-center gap-2 p-3 rounded-2xl shadow-2xl border backdrop-blur-md ${theme.cardBg} ${theme.border}`}>
+                    <div data-no-pan className={`fixed bottom-[184px] right-8 z-50 flex flex-col items-center gap-2 p-3 rounded-2xl shadow-2xl border backdrop-blur-md ${theme.cardBg} ${theme.border}`}>
                         <button
                             onClick={() => applyZoom(zoom + 0.1)}
                             className={`w-8 h-8 rounded-full flex items-center justify-center text-lg font-bold ${theme.textPrimary} hover:bg-white/20 active:scale-90 transition-all`}
@@ -826,7 +829,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 </>
             )}
 
-            <div className="fixed bottom-8 right-[112px] z-50 flex items-end flex-col gap-2">
+            <div className="fixed bottom-8 right-[112px] z-50 flex items-end flex-col gap-2" data-no-pan>
                 {isSearchOpen && (
                     <div className={`mb-2 w-72 rounded-xl shadow-2xl border backdrop-blur-md overflow-hidden transition-all duration-300 ${theme.cardBg} ${theme.border}`}>
                         <div className="p-2 border-b border-gray-700/50">
