@@ -529,7 +529,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         if (!el) return;
 
         const onTouchStart = (e) => {
-            if (e.touches.length === 1 && !e.target.closest('button') && !e.target.closest('input')) {
+            if (e.touches.length === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('[data-no-pan]')) {
                 panStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
             }
         };
@@ -665,6 +665,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                         <g
                                             key={data.id}
                                             transform={`translate(${charXLocal}, -60)`}
+                                            data-no-pan
                                             onDoubleClick={(e) => {
                                                 e.stopPropagation();
                                                 if (onFilterHouse && data['House']) {
