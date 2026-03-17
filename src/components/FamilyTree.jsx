@@ -257,9 +257,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const offsetY = 2000;
 
     const containerRef = useRef(null);
-    const [isDragging, setIsDragging] = useState(false);
-    const [startX, setStartX] = useState(0);
-    const [startY, setStartY] = useState(0);
+    const pointerDragRef = React.useRef({ isDragging: false, startX: 0, startY: 0 });
     const [zoom, setZoom] = useState(1);
     const zoomRef = React.useRef(1);
 
@@ -487,31 +485,38 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
     const onPointerDown = (e) => {
         if (e.target.closest('button')) return;
-        setIsDragging(true);
-        setStartX(e.clientX);
-        setStartY(e.clientY);
+
+        pointerDragRef.current = {
+            isDragging: true,
+            startX: e.clientX,
+            startY: e.clientY,
+            startScrollLeft: containerRef.current?.scrollLeft || 0,
+            startScrollTop: containerRef.current?.scrollTop || 0
+        };
+
         if (containerRef.current) {
+            containerRef.current.setPointerCapture(e.pointerId);
             containerRef.current.style.cursor = 'grabbing';
             containerRef.current.style.userSelect = 'none';
         }
     };
 
     const onPointerMove = (e) => {
-        if (!isDragging || !containerRef.current) return;
+        if (!pointerDragRef.current.isDragging || !containerRef.current) return;
 
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
+        const dx = e.clientX - pointerDragRef.current.startX;
+        const dy = e.clientY - pointerDragRef.current.startY;
 
-        containerRef.current.scrollLeft -= dx;
-        containerRef.current.scrollTop -= dy;
-
-        setStartX(e.clientX);
-        setStartY(e.clientY);
+        containerRef.current.scrollLeft = pointerDragRef.current.startScrollLeft - dx;
+        containerRef.current.scrollTop = pointerDragRef.current.startScrollTop - dy;
     };
 
-    const onPointerUp = () => {
-        setIsDragging(false);
+    const onPointerUp = (e) => {
+        if (!pointerDragRef.current.isDragging) return;
+        pointerDragRef.current.isDragging = false;
+
         if (containerRef.current) {
+            try { containerRef.current.releasePointerCapture(e.pointerId); } catch (err) { }
             containerRef.current.style.cursor = 'grab';
             containerRef.current.style.userSelect = 'auto';
         }
