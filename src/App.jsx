@@ -49,56 +49,101 @@ function App() {
   const filteredData = useMemo(() => {
     if (selectedHouses.size === 0 && selectedClaims.size === 0) return data;
 
-    // 1. Find direct matches
-    const directMatches = new Set(data.filter(char => {
+    const idToChar = new Map(data.map(d => [d.id.toString(), d]));
+    const nameToChar = new Map(data.filter(d => d['First Name']).map(d => [d['First Name'], d]));
+    
+    // Build full name map for better partner/parent matching
+    const fullNameToChar = new Map();
+    data.forEach(char => {
+      if (char['First Name']) {
+        const full = `${char['First Name']} ${char['House'] || ''}`.trim();
+        fullNameToChar.set(full, char);
+      }
+    });
+
+    // Build children map and infer spouses from shared children
+    const childrenMap = new Map();
+    const spouseMap = new Map(); // charId -> Set of partner IDs
+
+    data.forEach(char => {
+      const fId = char.FatherId?.toString();
+      const mId = char.MotherId?.toString();
+      
+      if (fId) {
+        if (!childrenMap.has(fId)) childrenMap.set(fId, []);
+        childrenMap.get(fId).push(char);
+      }
+      if (mId) {
+        if (!childrenMap.has(mId)) childrenMap.set(mId, []);
+        childrenMap.get(mId).push(char);
+      }
+
+      if (fId && mId) {
+        if (!spouseMap.has(fId)) spouseMap.set(fId, new Set());
+        if (!spouseMap.has(mId)) spouseMap.set(mId, new Set());
+        spouseMap.get(fId).add(mId);
+        spouseMap.get(mId).add(fId);
+      }
+    });
+
+    const directMatches = data.filter(char => {
       const houseMatch = selectedHouses.size === 0 || selectedHouses.has(char.House);
       const claimMatch = selectedClaims.size === 0 || selectedClaims.has(char.Claim);
       return houseMatch && claimMatch;
-    }));
+    });
 
-    // 2. Add parents and spouses of direct matches
-    const finalSet = new Set(directMatches);
+    const finalSet = new Set();
+    const visited = new Set();
 
-    // Quick lookup maps
-    const idToChar = new Map(data.map(d => [d.id.toString(), d]));
-    const nameToChar = new Map(data.filter(d => d['First Name']).map(d => [d['First Name'], d]));
+    const addSpousesInferred = (char) => {
+      const charId = char.id.toString();
+      const partnerIds = spouseMap.get(charId) || [];
+      partnerIds.forEach(pId => {
+        const partner = idToChar.get(pId);
+        if (partner) finalSet.add(partner);
+      });
 
-    directMatches.forEach(char => {
-      // Add Parents
-      if (char.FatherId && idToChar.has(char.FatherId.toString())) {
-        finalSet.add(idToChar.get(char.FatherId.toString()));
-      } else if (char.Father && nameToChar.has(char.Father)) {
-        finalSet.add(nameToChar.get(char.Father));
-      }
-
-      if (char.MotherId && idToChar.has(char.MotherId.toString())) {
-        finalSet.add(idToChar.get(char.MotherId.toString()));
-      } else if (char.Mother && nameToChar.has(char.Mother)) {
-        finalSet.add(nameToChar.get(char.Mother));
-      }
-
-      // Add Spouses (anyone who lists this char as a partner, or vice versa)
-      // Check if this char lists partners
+      // Still check 'Partners' field if it exists for some entries
       if (char.Partners) {
         const partnerNames = char.Partners.split(',').map(s => s.trim());
         partnerNames.forEach(pName => {
-          if (nameToChar.has(pName)) finalSet.add(nameToChar.get(pName));
+          const partner = fullNameToChar.get(pName) || nameToChar.get(pName);
+          if (partner) finalSet.add(partner);
         });
       }
-    });
+    };
 
-    // Also check if anyone else lists a directMatch as a partner
-    data.forEach(char => {
-      if (char.Partners) {
-        const partnerNames = char.Partners.split(',').map(s => s.trim());
-        const isPartnerOfMatch = Array.from(directMatches).some(match => partnerNames.includes(match['First Name']));
-        if (isPartnerOfMatch) {
-          finalSet.add(char);
-        }
+    const addDescendantsRecursive = (char) => {
+      if (visited.has(char.id)) return;
+      visited.add(char.id);
+
+      finalSet.add(char);
+      addSpousesInferred(char);
+
+      const children = childrenMap.get(char.id.toString()) || [];
+      children.forEach(child => {
+        addDescendantsRecursive(child);
+      });
+    };
+
+    directMatches.forEach(char => {
+      // Add character themselves
+      finalSet.add(char);
+
+      // Add parents (to maintain tree context for the direct matches)
+      if (char.FatherId && idToChar.has(char.FatherId.toString())) {
+        finalSet.add(idToChar.get(char.FatherId.toString()));
       }
+      if (char.MotherId && idToChar.has(char.MotherId.toString())) {
+        finalSet.add(idToChar.get(char.MotherId.toString()));
+      }
+
+      // Add character, their spouses, and all descendants recursively
+      addDescendantsRecursive(char);
     });
 
-    return Array.from(finalSet);
+    const result = Array.from(finalSet);
+    return result;
   }, [data, selectedHouses, selectedClaims]);
 
   const toggleHouse = (house) => {
