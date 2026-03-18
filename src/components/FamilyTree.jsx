@@ -99,38 +99,26 @@ const getMedian = (values, fallback = 0) => {
     return (sorted[middle - 1] + sorted[middle]) / 2;
 };
 
-const buildHouseClusterMap = (groupsMap) => {
-    const houseUf = new UnionFind();
-    const groupHouseLists = [];
+const buildRelationshipAdjacency = (nodes, charToGroupMap, resolver) => {
+    const adjacency = new Map();
+    const nodeMap = {};
 
-    Object.values(groupsMap).forEach(groupChars => {
-        const houses = [...new Set(groupChars.map(char => normalizeHouse(char.House)).filter(Boolean))];
-        if (!houses.length) return;
-
-        houses.forEach(house => houseUf.add(`house:${house}`));
-        for (let index = 1; index < houses.length; index += 1) {
-            houseUf.union(`house:${houses[0]}`, `house:${houses[index]}`);
-        }
-        groupHouseLists.push(houses);
+    nodes.forEach(node => {
+        nodeMap[node.id] = node;
+        adjacency.set(node.id, new Set());
     });
 
-    const rootToHouses = new Map();
-    groupHouseLists.forEach(houses => {
-        const root = houseUf.find(`house:${houses[0]}`);
-        const existing = rootToHouses.get(root) || new Set();
-        houses.forEach(house => existing.add(house));
-        rootToHouses.set(root, existing);
-    });
-
-    const houseToCluster = {};
-    rootToHouses.forEach(houses => {
-        const clusterId = [...houses].sort().join(' | ');
-        houses.forEach(house => {
-            houseToCluster[house] = clusterId;
+    nodes.forEach(node => {
+        node.chars.forEach(char => {
+            resolver(node, char).forEach(relatedId => {
+                if (!relatedId || relatedId === node.id || !adjacency.has(relatedId)) return;
+                adjacency.get(node.id).add(relatedId);
+                adjacency.get(relatedId).add(node.id);
+            });
         });
     });
 
-    return houseToCluster;
+    return { adjacency, nodeMap };
 };
 
 const assignLineageSubgroups = (d3Nodes, charToGroupMap) => {
@@ -159,14 +147,13 @@ const assignLineageSubgroups = (d3Nodes, charToGroupMap) => {
             if (lineage) break;
         }
 
-        if (!lineage) {
-            lineage = node.primaryHouse || node.familyCluster || node.id;
-        }
+        if (!lineage) lineage = node.primaryHouse || node.familyCluster || node.id;
 
         stack.delete(nodeId);
         lineageMemo.set(nodeId, lineage);
-        node.familySubgroup = lineage;
-        return lineage;
+        node.lineageHouse = lineage;
+        node.familySubgroup = node.primaryHouse || lineage;
+        return node.familySubgroup;
     };
 
     d3Nodes.forEach(node => {
@@ -176,30 +163,59 @@ const assignLineageSubgroups = (d3Nodes, charToGroupMap) => {
     });
 };
 
-const assignTreeBlocks = (d3Nodes, charToGroupMap) => {
+const assignGraphGroups = (d3Nodes, charToGroupMap) => {
     const nodes = d3Nodes.filter(node => node.id !== 'WORLD_ROOT');
-    const nodeMap = {};
-    const adjacency = new Map();
+    const { adjacency, nodeMap } = buildRelationshipAdjacency(
+        nodes,
+        charToGroupMap,
+        (_, char) => [char.FatherId, char.MotherId]
+            .filter(Boolean)
+            .map(parentId => charToGroupMap[parentId.toString()])
+            .filter(Boolean)
+    );
 
+    const visited = new Set();
+    const components = [];
     nodes.forEach(node => {
-        nodeMap[node.id] = node;
-        adjacency.set(node.id, new Set());
+        if (visited.has(node.id)) return;
+
+        const stack = [node.id];
+        const component = [];
+        visited.add(node.id);
+
+        while (stack.length) {
+            const currentId = stack.pop();
+            const currentNode = nodeMap[currentId];
+            component.push(currentNode);
+
+            adjacency.get(currentId)?.forEach(neighborId => {
+                const neighborNode = nodeMap[neighborId];
+                if (!neighborNode || visited.has(neighborId)) return;
+                visited.add(neighborId);
+                stack.push(neighborId);
+            });
+        }
+
+        component.sort((a, b) => getBirthYear({ data: a }) - getBirthYear({ data: b }) || getStableNodeOrder(a) - getStableNodeOrder(b));
+        components.push(component);
     });
 
-    nodes.forEach(node => {
-        node.chars.forEach(char => {
-            [char.FatherId, char.MotherId].forEach(parentId => {
-                if (!parentId) return;
-                const parentGroupId = charToGroupMap[parentId.toString()];
-                if (!parentGroupId || parentGroupId === node.id) return;
-                const parentNode = nodeMap[parentGroupId];
-                if (!parentNode || parentNode.familyCluster !== node.familyCluster) return;
-
-                adjacency.get(node.id).add(parentGroupId);
-                adjacency.get(parentGroupId).add(node.id);
+    components
+        .sort((a, b) => getBirthYear({ data: a[0] }) - getBirthYear({ data: b[0] }) || getStableNodeOrder(a[0]) - getStableNodeOrder(b[0]))
+        .forEach((component, groupIndex) => {
+            component.forEach(member => {
+                member.familyCluster = `group:${groupIndex + 1}`;
             });
         });
-    });
+};
+
+const assignTreeBlocks = (d3Nodes) => {
+    const nodes = d3Nodes.filter(node => node.id !== 'WORLD_ROOT');
+    const { adjacency, nodeMap } = buildRelationshipAdjacency(
+        nodes,
+        {},
+        (node) => (node.parentId && node.parentId !== 'WORLD_ROOT' ? [node.parentId] : [])
+    );
 
     const clusterKeys = [...new Set(nodes.map(node => node.familyCluster))].sort((a, b) => a.localeCompare(b));
     const clusterOrder = new Map(clusterKeys.map((key, index) => [key, index + 1]));
@@ -554,8 +570,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             groupsMap[rootId].push(char);
         });
 
-        const houseToClusterMap = buildHouseClusterMap(groupsMap);
-
         const d3Nodes = [];
         const charToGroupMap = {};
 
@@ -595,8 +609,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 parentId: null
             };
 
-            d3Node.familyCluster = houseToClusterMap[d3Node.primaryHouse] || d3Node.primaryHouse || d3Node.id;
-            d3Node.familySubgroup = d3Node.primaryHouse || d3Node.familyCluster;
+            d3Node.familyCluster = d3Node.id;
+            d3Node.familySubgroup = d3Node.primaryHouse || d3Node.id;
 
             groupChars.forEach(c => charToGroupMap[c.id.toString()] = d3Node.id);
             d3Nodes.push(d3Node);
@@ -634,8 +648,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             }
         });
 
+        assignGraphGroups(d3Nodes, charToGroupMap);
         assignLineageSubgroups(d3Nodes, charToGroupMap);
-        assignTreeBlocks(d3Nodes, charToGroupMap);
+        assignTreeBlocks(d3Nodes);
 
         // 5. Break biological loop errors
         const visited = new Set();
