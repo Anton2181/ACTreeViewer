@@ -29,6 +29,12 @@ const average = (values, fallback = 0) => {
     return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
+const SHARED_PARENT_MODES = [
+    { id: 'cards', label: 'Cards' },
+    { id: 'compact', label: 'Compact' },
+    { id: 'duplicate', label: 'Repeat' }
+];
+
 const normalizeHouse = (house) => (house || '').trim();
 
 const getDominantHouse = (chars) => {
@@ -752,7 +758,13 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         return <div className="text-gray-400 p-8">No valid tree data found.</div>;
     }
 
-    const sharedParentLayouts = Object.entries(charToGroups).reduce((acc, [charId, groupIds]) => {
+    const [sharedParentMode, setSharedParentMode] = useState('cards');
+    const showSharedParentAnchors = sharedParentMode !== 'duplicate';
+    const sharedParentCardWidth = sharedParentMode === 'compact' ? 152 : 190;
+    const sharedParentCardHeight = sharedParentMode === 'compact' ? 56 : 120;
+    const sharedParentLift = sharedParentMode === 'compact' ? 190 : 220;
+
+    const sharedParentLayouts = showSharedParentAnchors ? Object.entries(charToGroups).reduce((acc, [charId, groupIds]) => {
         if (!groupIds || groupIds.length < 2) return acc;
 
         const anchorCandidates = [];
@@ -785,11 +797,11 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         acc[charId] = {
             char: charData,
             x: average(anchorCandidates, idToNode[groupIds[0]]?.x || 0),
-            y: minY - 250
+            y: minY - sharedParentLift
         };
 
         return acc;
-    }, {});
+    }, {}) : {};
 
     const getRenderedChars = (node) => (
         node.data.chars.filter(char => {
@@ -798,10 +810,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     );
 
     const layoutBounds = Object.values(sharedParentLayouts).reduce((acc, { x, y }) => ({
-        minX: Math.min(acc.minX, x - 95),
-        maxX: Math.max(acc.maxX, x + 95),
+        minX: Math.min(acc.minX, x - sharedParentCardWidth / 2),
+        maxX: Math.max(acc.maxX, x + sharedParentCardWidth / 2),
         minY: Math.min(acc.minY, y),
-        maxY: Math.max(acc.maxY, y + 120),
+        maxY: Math.max(acc.maxY, y + sharedParentCardHeight),
     }), { ...bounds });
 
     // Helper geometry for clustered layouts
@@ -835,12 +847,17 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
     const resolveParentGroupId = (char) => getParentGroupIdForChar(char, parentPairToGroup, charToGroup);
 
-    const getParentMidpointGlobal = (parentGroupNode, childChar) => {
-        if (parentGroupNode.id === 'WORLD_ROOT') return parentGroupNode.x;
+    const getPartnerAnchorY = (node) => node.y + 72;
+    const getParentLinkAnchor = (parentGroupNode, childChar) => {
+        if (parentGroupNode.id === 'WORLD_ROOT') {
+            return { x: parentGroupNode.x, y: parentGroupNode.y + 65 };
+        }
+
         const fId = childChar.FatherId;
         const mId = childChar.MotherId;
         let xSum = 0;
         let count = 0;
+
         if (fId) {
             const x = getCharXGlobal(parentGroupNode.id, fId);
             if (x !== undefined && !isNaN(x)) { xSum += x; count++; }
@@ -849,8 +866,15 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             const x = getCharXGlobal(parentGroupNode.id, mId);
             if (x !== undefined && !isNaN(x)) { xSum += x; count++; }
         }
-        if (count === 0) return parentGroupNode.x;
-        return xSum / count;
+
+        return {
+            x: count === 0 ? parentGroupNode.x : xSum / count,
+            y: parentGroupNode.data.chars.length > 1 ? getPartnerAnchorY(parentGroupNode) : parentGroupNode.y + 65,
+        };
+    };
+
+    const getParentMidpointGlobal = (parentGroupNode, childChar) => {
+        return getParentLinkAnchor(parentGroupNode, childChar).x;
     };
 
     const containerRef = useRef(null);
@@ -893,27 +917,36 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const charId = scrollToCharRef.current;
         if (charId) {
             scrollToCharRef.current = null;
+            const sharedLayout = sharedParentLayouts[charId];
+            if (sharedLayout) {
+                setTimeout(() => scrollToSvg(
+                    sharedLayout.x + offsetX,
+                    sharedLayout.y + offsetY + sharedParentCardHeight / 2,
+                    true
+                ), 30);
+                return;
+            }
+
             // Find this char in the NEW layout
             let targetNode = null;
-            let localX = 0;
             root.descendants().forEach(node => {
                 if (node.id === 'WORLD_ROOT') return;
                 const char = node.data.chars.find(c => c.id.toString() === charId);
                 if (char) {
                     targetNode = node;
-                    const idx = node.data.chars.findIndex(c => c.id.toString() === charId);
-                    const N = node.data.chars.length;
-                    const W = 190 * N + 20 * (N - 1);
-                    localX = -W / 2 + idx * 210 + 95;
                 }
             });
             if (targetNode) {
-                setTimeout(() => scrollToSvg(targetNode.x + offsetX + localX, targetNode.y + offsetY, true), 30);
+                setTimeout(() => scrollToSvg(
+                    getCharXGlobal(targetNode.id, charId) + offsetX,
+                    targetNode.y + offsetY,
+                    true
+                ), 30);
                 return;
             }
         }
         setTimeout(handleRecenter, 0);
-    }, [root]);
+    }, [root, sharedParentLayouts, offsetX, offsetY, sharedParentCardHeight]);
 
     const handleRecenter = () => {
         const el = containerRef.current;
@@ -989,6 +1022,35 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         });
     };
 
+    const focusCharacter = (char, nodeId = charToGroup[char.id.toString()]) => {
+        if (!char) return;
+
+        const charId = char.id.toString();
+        setHighlightedCharId(charId);
+
+        const sharedLayout = sharedParentLayouts[charId];
+        if (sharedLayout) {
+            scrollToSvg(sharedLayout.x + offsetX, sharedLayout.y + offsetY + sharedParentCardHeight / 2);
+            return;
+        }
+
+        if (!nodeId) return;
+        const parentGroupNode = idToNode[nodeId];
+        if (!parentGroupNode) return;
+
+        scrollToSvg(
+            getCharXGlobal(nodeId, charId) + offsetX,
+            parentGroupNode.y + offsetY
+        );
+    };
+
+    const handleCardFilter = (char) => {
+        if (onFilterHouse && char?.House) {
+            scrollToCharRef.current = char.id.toString();
+            onFilterHouse(char.House);
+        }
+    };
+
     const handleSearch = (e) => {
         const query = e.target.value;
         setSearchQuery(query);
@@ -1037,28 +1099,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         }
 
         const char = res;
-        setHighlightedCharId(char.id.toString());
         setSearchQuery('');
         setSearchResults([]);
         setIsSearchOpen(false);
-
-        // Calculate global coordinates of the selected character
-        const parentGroupId = charToGroup[char.id.toString()];
-        if (!parentGroupId) return;
-
-        const charXGlobal = getCharXGlobal(parentGroupId, char.id.toString());
-        const parentGroupNode = idToNode[parentGroupId];
-        if (!parentGroupNode) return;
-        const charYGlobal = parentGroupNode.y;
-
-        // Animate pan to center the desired character
-        if (containerRef.current) {
-            containerRef.current.scrollTo({
-                left: (charXGlobal + offsetX) * zoom - window.innerWidth / 2,
-                top: (charYGlobal + offsetY) * zoom - window.innerHeight / 2,
-                behavior: 'smooth'
-            });
-        }
+        focusCharacter(char);
     };
 
     const handleScroll = () => {
@@ -1200,7 +1244,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                         if (link.source.id === 'WORLD_ROOT') return null;
 
                         const childTR = link.target.data.TR;
-                        const sourceX = getParentMidpointGlobal(link.source, childTR) + offsetX;
+                        const sourceAnchor = getParentLinkAnchor(link.source, childTR);
+                        const sourceX = sourceAnchor.x + offsetX;
                         const targetX = getCharXGlobal(link.target.id, childTR.id.toString()) + offsetX;
 
                         return (
@@ -1209,9 +1254,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                 className={`${theme.link} fill-none transition-all duration-300`}
                                 strokeWidth={2.5}
                                 d={`
-                  M ${sourceX},${link.source.y + 65 + offsetY}
-                  C ${sourceX},${(link.source.y + link.target.y) / 2 + offsetY}
-                    ${targetX},${(link.source.y + link.target.y) / 2 + offsetY}
+                  M ${sourceX},${sourceAnchor.y + offsetY}
+                  C ${sourceX},${(sourceAnchor.y + link.target.y) / 2 + offsetY}
+                    ${targetX},${(sourceAnchor.y + link.target.y) / 2 + offsetY}
                     ${targetX},${link.target.y - 65 + offsetY}
                 `}
                             />
@@ -1231,7 +1276,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                             const parentGroupNode = idToNode[parentGroupId];
                             if (!parentGroupNode) return null;
 
-                            const sourceX = getParentMidpointGlobal(parentGroupNode, char) + offsetX;
+                            const sourceAnchor = getParentLinkAnchor(parentGroupNode, char);
+                            const sourceX = sourceAnchor.x + offsetX;
                             const targetX = getCharXGlobal(node.id, char.id.toString()) + offsetX;
 
                             return (
@@ -1240,9 +1286,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                     className={`${theme.link} fill-none transition-all duration-300`}
                                     strokeWidth={2.5}
                                     d={`
-                      M ${sourceX},${parentGroupNode.y + 65 + offsetY}
-                      C ${sourceX},${(parentGroupNode.y + node.y) / 2 + offsetY}
-                        ${targetX},${(parentGroupNode.y + node.y) / 2 + offsetY}
+                      M ${sourceX},${sourceAnchor.y + offsetY}
+                      C ${sourceX},${(sourceAnchor.y + node.y) / 2 + offsetY}
+                        ${targetX},${(sourceAnchor.y + node.y) / 2 + offsetY}
                         ${targetX},${node.y - 65 + offsetY}
                     `}
                                 />
@@ -1257,25 +1303,24 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                         const [leftChar, rightChar] = node.data.chars;
                         const leftX = getCharXGlobal(node.id, leftChar.id.toString()) + offsetX;
                         const rightX = getCharXGlobal(node.id, rightChar.id.toString()) + offsetX;
-                        const connectorY = node.y + offsetY;
+                        const connectorY = getPartnerAnchorY(node) + offsetY;
                         const leftShared = sharedParentLayouts[leftChar.id.toString()];
                         const rightShared = sharedParentLayouts[rightChar.id.toString()];
-                        const sharedParent = leftShared || rightShared;
+                        const leftStemTopY = leftShared ? leftShared.y + sharedParentCardHeight + offsetY : node.y + 60 + offsetY;
+                        const rightStemTopY = rightShared ? rightShared.y + sharedParentCardHeight + offsetY : node.y + 60 + offsetY;
 
                         return (
-                            <path
-                                key={`partner-${node.id}`}
-                                className={`${theme.link} opacity-50 fill-none`}
-                                strokeWidth={2}
-                                d={sharedParent ? `
-                      M ${sharedParent.x + offsetX},${sharedParent.y + offsetY + 60}
-                      L ${sharedParent.x + offsetX},${connectorY}
-                      L ${leftShared ? rightX : leftX},${connectorY}
-                    ` : `
-                      M ${leftX},${connectorY}
+                            <g key={`partner-${node.id}`} className={`${theme.link} opacity-60 fill-none`}>
+                                <path
+                                    strokeWidth={2}
+                                    d={`
+                      M ${leftX},${leftStemTopY}
+                      L ${leftX},${connectorY}
                       L ${rightX},${connectorY}
+                      L ${rightX},${rightStemTopY}
                     `}
-                            />
+                                />
+                            </g>
                         );
                     })}
 
@@ -1290,24 +1335,55 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                             : char['Sex']?.toLowerCase().startsWith('m') ? '#60a5fa'
                                 : '#9ca3af';
 
+                        const isCompact = sharedParentMode === 'compact';
+                        const isHighlighted = highlightedCharId === charId;
+                        const halfWidth = sharedParentCardWidth / 2;
+                        const cardTop = y + offsetY;
+
                         return (
-                            <g key={`shared-parent-${charId}`} transform={`translate(${x + offsetX},${y + offsetY})`}>
-                                <rect x={-95} y={0} width={190} height={120} rx={12} fill={cardFill} stroke={strokeColor} strokeWidth={1} />
-                                <rect x={-95} y={0} width={4} height={120} rx={2} fill={sexColor} opacity={0.8} />
-                                <text x={85} y={15} fill={textSecondary} fontSize={9} fontFamily="monospace" textAnchor="end" opacity={0.8}>
+                            <g
+                                key={`shared-parent-${charId}`}
+                                transform={`translate(${x + offsetX},${cardTop})`}
+                                data-no-pan
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    focusCharacter(char);
+                                }}
+                                onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCardFilter(char);
+                                }}
+                                className="cursor-pointer group"
+                            >
+                                <rect
+                                    x={-halfWidth}
+                                    y={0}
+                                    width={sharedParentCardWidth}
+                                    height={sharedParentCardHeight}
+                                    rx={12}
+                                    fill={cardFill}
+                                    stroke={isHighlighted ? '#facc15' : strokeColor}
+                                    strokeWidth={isHighlighted ? 4 : 1}
+                                />
+                                <rect x={-halfWidth} y={0} width={4} height={sharedParentCardHeight} rx={2} fill={sexColor} opacity={0.8} />
+                                <text x={halfWidth - 10} y={15} fill={textSecondary} fontSize={9} fontFamily="monospace" textAnchor="end" opacity={0.8}>
                                     #{char.id}
                                 </text>
-                                <text x={0} y={30} fill={textPrimary} fontSize={14} fontWeight="bold" fontFamily="Cinzel, serif" textAnchor="middle">
+                                <text x={0} y={isCompact ? 24 : 30} fill={textPrimary} fontSize={isCompact ? 13 : 14} fontWeight="bold" fontFamily="Cinzel, serif" textAnchor="middle">
                                     {char['First Name']}
                                 </text>
-                                <text x={0} y={45} fill={textSecondary} fontSize={11} letterSpacing={2} textAnchor="middle" textTransform="uppercase">
+                                <text x={0} y={isCompact ? 39 : 45} fill={textSecondary} fontSize={isCompact ? 9 : 11} letterSpacing={2} textAnchor="middle" textTransform="uppercase">
                                     {char['House']}
                                 </text>
-                                <text x={-20} y={75} fill={textSecondary} fontSize={9} textAnchor="end" fontWeight="500">Born:</text>
-                                <text x={-15} y={75} fill={textPrimary} fontSize={10} fontWeight="bold" textAnchor="start">
-                                    {char['Year of Birth'] || '?'}
-                                    <tspan fill={textSecondary} fontSize={8} fontWeight="normal"> (Age {char['Age'] || '?'})</tspan>
-                                </text>
+                                {!isCompact && (
+                                    <>
+                                        <text x={-20} y={75} fill={textSecondary} fontSize={9} textAnchor="end" fontWeight="500">Born:</text>
+                                        <text x={-15} y={75} fill={textPrimary} fontSize={10} fontWeight="bold" textAnchor="start">
+                                            {char['Year of Birth'] || '?'}
+                                            <tspan fill={textSecondary} fontSize={8} fontWeight="normal"> (Age {char['Age'] || '?'})</tspan>
+                                        </text>
+                                    </>
+                                )}
                             </g>
                         );
                     })}
@@ -1348,12 +1424,13 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                             key={data.id}
                                             transform={`translate(${charXLocal}, -60)`}
                                             data-no-pan
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                focusCharacter(data, node.id);
+                                            }}
                                             onDoubleClick={(e) => {
                                                 e.stopPropagation();
-                                                if (onFilterHouse && data['House']) {
-                                                    scrollToCharRef.current = data.id.toString();
-                                                    onFilterHouse(data['House']);
-                                                }
+                                                handleCardFilter(data);
                                             }}
                                             className="cursor-pointer group"
                                         >
@@ -1518,6 +1595,27 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             )}
 
             <div className="fixed bottom-8 right-[112px] z-50 flex items-end flex-col gap-2" data-no-pan>
+                <div className={`w-72 rounded-xl shadow-2xl border backdrop-blur-md px-3 py-2 ${theme.cardBg} ${theme.border}`}>
+                    <div className={`text-[10px] uppercase tracking-[0.25em] mb-2 ${theme.textSecondary}`}>Shared parents</div>
+                    <div className="grid grid-cols-3 gap-2">
+                        {SHARED_PARENT_MODES.map(mode => {
+                            const isActive = sharedParentMode === mode.id;
+                            return (
+                                <button
+                                    key={mode.id}
+                                    type="button"
+                                    onClick={() => setSharedParentMode(mode.id)}
+                                    className={`rounded-lg px-2 py-2 text-xs font-semibold transition-all ${isActive
+                                        ? 'bg-blue-600 text-white shadow-lg'
+                                        : `${theme.textPrimary} hover:bg-white/10`}`}
+                                >
+                                    {mode.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
                 {isSearchOpen && (
                     <div className={`mb-2 w-72 rounded-xl shadow-2xl border backdrop-blur-md overflow-hidden transition-all duration-300 ${theme.cardBg} ${theme.border}`}>
                         <div className="p-2 border-b border-gray-700/50">
