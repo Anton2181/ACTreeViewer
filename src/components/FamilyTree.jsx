@@ -31,29 +31,6 @@ const average = (values, fallback = 0) => {
 
 const normalizeHouse = (house) => (house || '').trim();
 
-const LAYOUT_MODES = [
-    {
-        id: 'family-blocks',
-        label: 'Family Blocks',
-        description: 'Top-down house clusters with subgroups kept contiguous.'
-    },
-    {
-        id: 'barycenter',
-        label: 'Barycenter',
-        description: 'Classic layered-graph crossing minimization by average anchor.'
-    },
-    {
-        id: 'median',
-        label: 'Median',
-        description: 'Classic layered-graph ordering using median related anchors.'
-    },
-    {
-        id: 'chronological',
-        label: 'Birth Order',
-        description: 'Stable ordering by inherited family line and birth year.'
-    }
-];
-
 const getDominantHouse = (chars) => {
     const houseCounts = new Map();
 
@@ -90,6 +67,8 @@ const getNodeClusterKey = (node) => node?.data?.familyCluster || node?.data?.pri
 const getNodeSubgroupKey = (node) => node?.data?.familySubgroup || node?.data?.primaryHouse || getNodeClusterKey(node);
 
 const getNodeTreeKey = (node) => node?.data?.familyTree || `${getNodeClusterKey(node)}::${node?.id || 'tree'}`;
+
+const getNodeGroupHouse = (node) => node?.data?.groupPreferredHouse || getNodeSubgroupKey(node);
 
 const getMedian = (values, fallback = 0) => {
     if (!values.length) return fallback;
@@ -201,10 +180,29 @@ const assignGraphGroups = (d3Nodes, charToGroupMap) => {
     });
 
     components
-        .sort((a, b) => getBirthYear({ data: a[0] }) - getBirthYear({ data: b[0] }) || getStableNodeOrder(a[0]) - getStableNodeOrder(b[0]))
-        .forEach((component, groupIndex) => {
+        .map(component => {
+            const houseCounts = new Map();
             component.forEach(member => {
+                const house = member.primaryHouse || member.lineageHouse || '';
+                if (!house) return;
+                houseCounts.set(house, (houseCounts.get(house) || 0) + 1);
+            });
+
+            const dominantHouse = houseCounts.size
+                ? [...houseCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0]
+                : '';
+
+            return { component, dominantHouse };
+        })
+        .sort((a, b) =>
+            a.dominantHouse.localeCompare(b.dominantHouse)
+            || getBirthYear({ data: a.component[0] }) - getBirthYear({ data: b.component[0] })
+            || getStableNodeOrder(a.component[0]) - getStableNodeOrder(b.component[0])
+        )
+        .forEach((component, groupIndex) => {
+            component.component.forEach(member => {
                 member.familyCluster = `group:${groupIndex + 1}`;
+                member.groupPreferredHouse = component.dominantHouse || member.primaryHouse || member.lineageHouse || member.familyCluster;
             });
         });
 };
@@ -270,7 +268,7 @@ const assignTreeBlocks = (d3Nodes) => {
     });
 };
 
-const buildOrderingMetrics = (rootHierarchy, charToGroupMap, layoutMode, emphasis = 'parent') => {
+const buildOrderingMetrics = (rootHierarchy, charToGroupMap, emphasis = 'parent') => {
     const nodes = rootHierarchy.descendants();
     const nodeMap = {};
     nodes.forEach(node => {
@@ -357,26 +355,17 @@ const buildOrderingMetrics = (rootHierarchy, charToGroupMap, layoutMode, emphasi
         const childAnchor = descendantAnchor.get(node.id) ?? node.x;
         const relatedAnchors = [...parentAnchors, childAnchor].filter(value => Number.isFinite(value));
 
-        let score = node.x;
-        if (layoutMode === 'barycenter') {
-            score = average(relatedAnchors, average([parentAnchor, childAnchor], node.x));
-        } else if (layoutMode === 'median') {
-            score = getMedian(relatedAnchors, average([parentAnchor, childAnchor], node.x));
-        } else if (layoutMode === 'chronological') {
-            score = node.x;
-        } else {
-            const weights = emphasis === 'children'
-                ? { parent: 0.18, cluster: 0.17, tree: 0.35, subgroup: 0.1, child: 0.2 }
-                : { parent: 0.25, cluster: 0.15, tree: 0.4, subgroup: 0.15, child: 0.05 };
+        const weights = emphasis === 'children'
+            ? { parent: 0.18, cluster: 0.17, tree: 0.35, subgroup: 0.1, child: 0.2 }
+            : { parent: 0.25, cluster: 0.15, tree: 0.4, subgroup: 0.15, child: 0.05 };
 
-            score = (
-                parentAnchor * weights.parent
-                + clusterAnchor * weights.cluster
-                + treeAnchor * weights.tree
-                + subgroupAnchor * weights.subgroup
-                + childAnchor * weights.child
-            );
-        }
+        const score = (
+            parentAnchor * weights.parent
+            + clusterAnchor * weights.cluster
+            + treeAnchor * weights.tree
+            + subgroupAnchor * weights.subgroup
+            + childAnchor * weights.child
+        );
 
         metrics.set(node.id, {
             parentAnchor,
@@ -505,8 +494,8 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
     return rankMap;
 };
 
-const compareNodeOrder = (a, b, metrics, siblingRanks, layoutMode) => {
-    if (layoutMode === 'family-blocks' && a.parent?.id === b.parent?.id) {
+const compareNodeOrder = (a, b, metrics, siblingRanks) => {
+    if (a.parent?.id === b.parent?.id) {
         const rankA = siblingRanks.get(a.id);
         const rankB = siblingRanks.get(b.id);
         if (rankA && rankB) {
@@ -518,20 +507,13 @@ const compareNodeOrder = (a, b, metrics, siblingRanks, layoutMode) => {
         }
     }
 
-    if (layoutMode === 'chronological') {
-        const subgroupDelta = getNodeSubgroupKey(a).localeCompare(getNodeSubgroupKey(b));
-        if (subgroupDelta !== 0) return subgroupDelta;
-
-        const birthDelta = getBirthYear(a) - getBirthYear(b);
-        if (birthDelta !== 0) return birthDelta;
-
-        return getStableNodeOrder(a) - getStableNodeOrder(b);
-    }
-
     const metricA = metrics.get(a.id);
     const metricB = metrics.get(b.id);
     const scoreDelta = (metricA?.score ?? a.x) - (metricB?.score ?? b.x);
     if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
+
+    const houseDelta = getNodeGroupHouse(a).localeCompare(getNodeGroupHouse(b));
+    if (houseDelta !== 0) return houseDelta;
 
     const clusterDelta = getNodeClusterKey(a).localeCompare(getNodeClusterKey(b));
     if (clusterDelta !== 0) return clusterDelta;
@@ -550,7 +532,6 @@ const compareNodeOrder = (a, b, metrics, siblingRanks, layoutMode) => {
 
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
-    const [layoutMode, setLayoutMode] = useState('family-blocks');
     const { root, idToNode, charToGroup, bounds } = useMemo(() => {
         if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         // 1. Unify Spouses
@@ -601,6 +582,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 TR: tr,
                 chars: groupChars,
                 primaryHouse: getDominantHouse(groupChars),
+                groupPreferredHouse: '',
                 familyCluster: '',
                 familySubgroup: '',
                 familyTree: '',
@@ -621,6 +603,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             TR: { id: 'WORLD_ROOT', 'First Name': 'Westeros' },
             chars: [],
             primaryHouse: '',
+            groupPreferredHouse: 'WORLD_ROOT',
             familyCluster: 'WORLD_ROOT',
             familySubgroup: 'WORLD_ROOT',
             familyTree: 'WORLD_ROOT',
@@ -686,6 +669,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
             // Initial Arbitrary Layout Pass to establish parent X coordinates
             rootHierarchy.sort((a, b) => {
+                const houseDelta = getNodeGroupHouse(a).localeCompare(getNodeGroupHouse(b));
+                if (houseDelta !== 0) return houseDelta;
+
                 const clusterDelta = getNodeClusterKey(a).localeCompare(getNodeClusterKey(b));
                 if (clusterDelta !== 0) return clusterDelta;
 
@@ -707,17 +693,13 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
             treeLayout(rootHierarchy);
 
-            const layoutPasses = layoutMode === 'family-blocks'
-                ? ['parent', 'children', 'parent', 'children']
-                : ['parent', 'children'];
+            const layoutPasses = ['parent', 'children', 'parent', 'children'];
             const nodeMap = {};
 
             layoutPasses.forEach(emphasis => {
-                const metrics = buildOrderingMetrics(rootHierarchy, charToGroupMap, layoutMode, emphasis);
-                const siblingRanks = layoutMode === 'family-blocks'
-                    ? buildSiblingRanks(rootHierarchy, metrics)
-                    : new Map();
-                rootHierarchy.sort((a, b) => compareNodeOrder(a, b, metrics, siblingRanks, layoutMode));
+                const metrics = buildOrderingMetrics(rootHierarchy, charToGroupMap, emphasis);
+                const siblingRanks = buildSiblingRanks(rootHierarchy, metrics);
+                rootHierarchy.sort((a, b) => compareNodeOrder(a, b, metrics, siblingRanks));
                 treeLayout(rootHierarchy);
             });
 
@@ -743,7 +725,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             console.error("Tree layout error:", e);
             return { root: null, idToNode: {}, charToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         }
-    }, [data, layoutMode]);
+    }, [data]);
 
     if (!root) {
         return <div className="text-gray-400 p-8">No valid tree data found.</div>;
@@ -1396,32 +1378,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             )}
 
             <div className="fixed bottom-8 right-[112px] z-50 flex items-end flex-col gap-2" data-no-pan>
-                <div className={`w-72 rounded-2xl shadow-2xl border backdrop-blur-md px-4 py-3 ${theme.cardBg} ${theme.border}`}>
-                    <div className="flex items-center justify-between gap-3">
-                        <div>
-                            <div className={`text-[10px] uppercase tracking-[0.2em] ${theme.textSecondary}`}>Layout</div>
-                            <div className={`text-sm font-semibold ${theme.textPrimary}`}>
-                                {LAYOUT_MODES.find(mode => mode.id === layoutMode)?.label || 'Family Blocks'}
-                            </div>
-                        </div>
-                        <select
-                            value={layoutMode}
-                            onChange={(e) => setLayoutMode(e.target.value)}
-                            className={`rounded-lg px-3 py-2 text-xs font-semibold bg-white/10 border ${theme.border} ${theme.textPrimary} outline-none`}
-                            title="Choose a layout strategy"
-                        >
-                            {LAYOUT_MODES.map(mode => (
-                                <option key={mode.id} value={mode.id} className="text-black">
-                                    {mode.label}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <p className={`mt-2 text-[11px] leading-relaxed ${theme.textSecondary}`}>
-                        {LAYOUT_MODES.find(mode => mode.id === layoutMode)?.description}
-                    </p>
-                </div>
-
                 {isSearchOpen && (
                     <div className={`mb-2 w-72 rounded-xl shadow-2xl border backdrop-blur-md overflow-hidden transition-all duration-300 ${theme.cardBg} ${theme.border}`}>
                         <div className="p-2 border-b border-gray-700/50">
