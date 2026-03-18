@@ -752,12 +752,57 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         return <div className="text-gray-400 p-8">No valid tree data found.</div>;
     }
 
+    const sharedParentLayouts = Object.entries(charToGroups).reduce((acc, [charId, groupIds]) => {
+        if (!groupIds || groupIds.length < 2) return acc;
+
+        const anchorCandidates = [];
+        let charData = null;
+        let minY = Infinity;
+
+        groupIds.forEach(groupId => {
+            const node = idToNode[groupId];
+            if (!node) return;
+
+            if (!charData) {
+                charData = node.data.chars.find(char => char.id.toString() === charId) || null;
+            }
+
+            minY = Math.min(minY, node.y);
+            const visiblePartners = node.data.chars.filter(char => char.id.toString() !== charId);
+            if (visiblePartners.length === 1) {
+                anchorCandidates.push(node.x);
+            } else {
+                const width = 190 * visiblePartners.length + 20 * (visiblePartners.length - 1);
+                visiblePartners.forEach((partner, index) => {
+                    const localX = -width / 2 + index * 210 + 95;
+                    anchorCandidates.push(node.x + localX);
+                });
+            }
+        });
+
+        if (!charData) return acc;
+
+        acc[charId] = {
+            char: charData,
+            x: average(anchorCandidates, idToNode[groupIds[0]]?.x || 0),
+            y: minY - 250
+        };
+
+        return acc;
+    }, {});
+
     const getRenderedChars = (node) => (
         node.data.chars.filter(char => {
-            const primaryGroupId = charToGroups[char.id.toString()]?.[0];
-            return !primaryGroupId || primaryGroupId === node.id;
+            return !sharedParentLayouts[char.id.toString()];
         })
     );
+
+    const layoutBounds = Object.values(sharedParentLayouts).reduce((acc, { x, y }) => ({
+        minX: Math.min(acc.minX, x - 95),
+        maxX: Math.max(acc.maxX, x + 95),
+        minY: Math.min(acc.minY, y),
+        maxY: Math.max(acc.maxY, y + 120),
+    }), { ...bounds });
 
     // Helper geometry for clustered layouts
     const getCharXLocal = (node, charId) => {
@@ -771,6 +816,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     };
 
     const getCharXGlobal = (nodeId, charId) => {
+        if (sharedParentLayouts[charId?.toString?.() || charId]) {
+            return sharedParentLayouts[charId?.toString?.() || charId].x;
+        }
+
         const primaryGroupId = charToGroups[charId?.toString?.() || charId]?.[0];
         if (primaryGroupId && primaryGroupId !== nodeId) {
             const primaryNode = idToNode[primaryGroupId];
@@ -811,12 +860,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const [scrollRatio, setScrollRatio] = useState(0);
 
     // Dynamic canvas size
-    const CANVAS_WIDTH = (bounds.maxX - bounds.minX) + 400;
-    const CANVAS_HEIGHT = Math.max(window.innerHeight, (bounds.maxY - bounds.minY) * 2);
+    const CANVAS_WIDTH = (layoutBounds.maxX - layoutBounds.minX) + 400;
+    const CANVAS_HEIGHT = Math.max(window.innerHeight, (layoutBounds.maxY - layoutBounds.minY) * 2);
 
     // Place the root node in the upper-middle of the canvas
-    const offsetX = -bounds.minX + 200;
-    const offsetY = 80;
+    const offsetX = -layoutBounds.minX + 200;
+    const offsetY = -layoutBounds.minY + 80;
 
     // Use a ref for pinch state to avoid stale closures
     const pinchRef = React.useRef(null); // { dist, zoom }
@@ -1209,17 +1258,57 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                         const leftX = getCharXGlobal(node.id, leftChar.id.toString()) + offsetX;
                         const rightX = getCharXGlobal(node.id, rightChar.id.toString()) + offsetX;
                         const connectorY = node.y + offsetY;
+                        const leftShared = sharedParentLayouts[leftChar.id.toString()];
+                        const rightShared = sharedParentLayouts[rightChar.id.toString()];
+                        const sharedParent = leftShared || rightShared;
 
                         return (
                             <path
                                 key={`partner-${node.id}`}
                                 className={`${theme.link} opacity-50 fill-none`}
                                 strokeWidth={2}
-                                d={`
+                                d={sharedParent ? `
+                      M ${sharedParent.x + offsetX},${sharedParent.y + offsetY + 60}
+                      L ${sharedParent.x + offsetX},${connectorY}
+                      L ${leftShared ? rightX : leftX},${connectorY}
+                    ` : `
                       M ${leftX},${connectorY}
                       L ${rightX},${connectorY}
                     `}
                             />
+                        );
+                    })}
+
+                    {/* Shared Remarriage Parents */}
+                    {Object.entries(sharedParentLayouts).map(([charId, { char, x, y }]) => {
+                        const isDark = theme.current === 'dark';
+                        const cardFill = isDark ? '#1e293b' : '#f8fafc';
+                        const strokeColor = isDark ? '#334155' : '#cbd5e1';
+                        const textPrimary = isDark ? '#f1f5f9' : '#0f172a';
+                        const textSecondary = isDark ? '#94a3b8' : '#475569';
+                        const sexColor = char['Sex']?.toLowerCase().startsWith('f') ? '#fb7185'
+                            : char['Sex']?.toLowerCase().startsWith('m') ? '#60a5fa'
+                                : '#9ca3af';
+
+                        return (
+                            <g key={`shared-parent-${charId}`} transform={`translate(${x + offsetX},${y + offsetY})`}>
+                                <rect x={-95} y={0} width={190} height={120} rx={12} fill={cardFill} stroke={strokeColor} strokeWidth={1} />
+                                <rect x={-95} y={0} width={4} height={120} rx={2} fill={sexColor} opacity={0.8} />
+                                <text x={85} y={15} fill={textSecondary} fontSize={9} fontFamily="monospace" textAnchor="end" opacity={0.8}>
+                                    #{char.id}
+                                </text>
+                                <text x={0} y={30} fill={textPrimary} fontSize={14} fontWeight="bold" fontFamily="Cinzel, serif" textAnchor="middle">
+                                    {char['First Name']}
+                                </text>
+                                <text x={0} y={45} fill={textSecondary} fontSize={11} letterSpacing={2} textAnchor="middle" textTransform="uppercase">
+                                    {char['House']}
+                                </text>
+                                <text x={-20} y={75} fill={textSecondary} fontSize={9} textAnchor="end" fontWeight="500">Born:</text>
+                                <text x={-15} y={75} fill={textPrimary} fontSize={10} fontWeight="bold" textAnchor="start">
+                                    {char['Year of Birth'] || '?'}
+                                    <tspan fill={textSecondary} fontSize={8} fontWeight="normal"> (Age {char['Age'] || '?'})</tspan>
+                                </text>
+                            </g>
                         );
                     })}
 
