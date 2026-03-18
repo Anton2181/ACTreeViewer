@@ -411,18 +411,20 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         // Find matches in ALL data to suggest House filters
         const sourceData = allData && allData.length > 0 ? allData : data;
         const matchedCharsAll = sourceData.filter(char => {
-            const nameMatch = char['First Name']?.toLowerCase().includes(lowerQuery);
-            const houseMatch = char['House']?.toLowerCase().includes(lowerQuery);
-            return nameMatch || houseMatch;
+            const firstName = (char['First Name'] || '').toLowerCase();
+            const houseName = (char['House'] || '').toLowerCase();
+            const fullName = `${firstName} ${houseName}`.trim();
+            return firstName.includes(lowerQuery) || houseName.includes(lowerQuery) || fullName.includes(lowerQuery);
         });
 
         const matchedHouses = Array.from(new Set(matchedCharsAll.map(c => c['House']).filter(Boolean)));
 
         // Find character matches only in VISIBLE data so we can pan to them
         const matchedCharsVisible = data.filter(char => {
-            const nameMatch = char['First Name']?.toLowerCase().includes(lowerQuery);
-            const houseMatch = char['House']?.toLowerCase().includes(lowerQuery);
-            return nameMatch || houseMatch;
+            const firstName = (char['First Name'] || '').toLowerCase();
+            const houseName = (char['House'] || '').toLowerCase();
+            const fullName = `${firstName} ${houseName}`.trim();
+            return firstName.includes(lowerQuery) || houseName.includes(lowerQuery) || fullName.includes(lowerQuery);
         });
 
         const results = [
