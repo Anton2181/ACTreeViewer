@@ -17,6 +17,144 @@ class UnionFind {
     }
 }
 
+const getBirthYear = (node) => parseInt(node?.data?.TR?.['Year of Birth'], 10) || 9999;
+
+const getStableNodeOrder = (node) => {
+    const numericId = parseInt(node?.id, 10);
+    return Number.isNaN(numericId) ? Number.MAX_SAFE_INTEGER : numericId;
+};
+
+const average = (values, fallback = 0) => {
+    if (!values.length) return fallback;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+};
+
+const getDominantHouse = (chars) => {
+    const houseCounts = new Map();
+
+    chars.forEach(char => {
+        const house = (char.House || '').trim();
+        if (!house) return;
+        houseCounts.set(house, (houseCounts.get(house) || 0) + 1);
+    });
+
+    if (houseCounts.size === 0) return '';
+
+    return [...houseCounts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+};
+
+const getCategory = (childNode, parentNode) => {
+    if (!parentNode || parentNode.id === 'WORLD_ROOT') return 0;
+
+    const childChar = childNode.data.TR;
+    const fId = childChar.FatherId ? childChar.FatherId.toString() : null;
+    const mId = childChar.MotherId ? childChar.MotherId.toString() : null;
+    const parentIds = parentNode.data.chars.map(c => c.id.toString());
+
+    const hasFather = fId && parentIds.includes(fId);
+    const hasMother = mId && parentIds.includes(mId);
+
+    if (hasFather && !hasMother) return -1;
+    if (!hasFather && hasMother) return 1;
+    return 0;
+};
+
+const buildOrderingMetrics = (rootHierarchy, charToGroupMap, emphasis = 'parent') => {
+    const nodes = rootHierarchy.descendants();
+    const nodeMap = {};
+    nodes.forEach(node => {
+        nodeMap[node.id] = node;
+    });
+
+    const houseByDepth = new Map();
+    nodes.forEach(node => {
+        if (node.id === 'WORLD_ROOT') return;
+        const house = node.data.primaryHouse;
+        if (!house) return;
+
+        if (!houseByDepth.has(node.depth)) {
+            houseByDepth.set(node.depth, new Map());
+        }
+
+        const depthMap = houseByDepth.get(node.depth);
+        const entry = depthMap.get(house) || { sum: 0, count: 0 };
+        entry.sum += node.x;
+        entry.count += 1;
+        depthMap.set(house, entry);
+    });
+
+    const descendantAnchor = new Map();
+    [...nodes].reverse().forEach(node => {
+        const childAnchors = (node.children || []).map(child => descendantAnchor.get(child.id) ?? child.x);
+        descendantAnchor.set(node.id, average(childAnchors, node.x));
+    });
+
+    const metrics = new Map();
+    nodes.forEach(node => {
+        if (node.id === 'WORLD_ROOT') {
+            metrics.set(node.id, { score: node.x });
+            return;
+        }
+
+        const uniqueParentGroups = new Set();
+        const parentAnchors = [];
+        node.data.chars.forEach(char => {
+            [char.FatherId, char.MotherId].forEach(parentId => {
+                if (!parentId) return;
+                const parentGroupId = charToGroupMap[parentId.toString()];
+                if (!parentGroupId || uniqueParentGroups.has(parentGroupId) || !nodeMap[parentGroupId]) return;
+                uniqueParentGroups.add(parentGroupId);
+                parentAnchors.push(nodeMap[parentGroupId].x);
+            });
+        });
+
+        const parentAnchor = average(parentAnchors, node.parent?.x ?? node.x);
+        const depthHouseMap = houseByDepth.get(node.depth);
+        const houseEntry = depthHouseMap?.get(node.data.primaryHouse);
+        const houseAnchor = houseEntry ? houseEntry.sum / houseEntry.count : node.x;
+        const childAnchor = descendantAnchor.get(node.id) ?? node.x;
+
+        const weights = emphasis === 'children'
+            ? { parent: 0.25, house: 0.3, child: 0.45 }
+            : { parent: 0.5, house: 0.3, child: 0.2 };
+
+        metrics.set(node.id, {
+            parentAnchor,
+            houseAnchor,
+            childAnchor,
+            score: (
+                parentAnchor * weights.parent
+                + houseAnchor * weights.house
+                + childAnchor * weights.child
+            )
+        });
+    });
+
+    return metrics;
+};
+
+const compareNodeOrder = (a, b, metrics) => {
+    const catA = getCategory(a, a.parent);
+    const catB = getCategory(b, b.parent);
+    if (catA !== catB) return catA - catB;
+
+    const metricA = metrics.get(a.id);
+    const metricB = metrics.get(b.id);
+    const scoreDelta = (metricA?.score ?? a.x) - (metricB?.score ?? b.x);
+    if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
+
+    const houseA = a.data.primaryHouse || '';
+    const houseB = b.data.primaryHouse || '';
+    const houseDelta = houseA.localeCompare(houseB);
+    if (houseDelta !== 0) return houseDelta;
+
+    const birthDelta = getBirthYear(a) - getBirthYear(b);
+    if (birthDelta !== 0) return birthDelta;
+
+    return getStableNodeOrder(a) - getStableNodeOrder(b);
+};
+
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
     const { root, idToNode, charToGroup, bounds } = useMemo(() => {
@@ -68,6 +206,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 id: tr.id.toString(),
                 TR: tr,
                 chars: groupChars,
+                primaryHouse: getDominantHouse(groupChars),
                 groupSize: groupChars.length,
                 parentId: null
             };
@@ -131,10 +270,13 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
             // Initial Arbitrary Layout Pass to establish parent X coordinates
             rootHierarchy.sort((a, b) => {
-                if (!a.parent || a.parent.id === 'WORLD_ROOT') return 0;
-                const yearA = parseInt(a.data.TR['Year of Birth']) || 9999;
-                const yearB = parseInt(b.data.TR['Year of Birth']) || 9999;
-                return yearA - yearB;
+                const houseDelta = (a.data.primaryHouse || '').localeCompare(b.data.primaryHouse || '');
+                if (houseDelta !== 0) return houseDelta;
+
+                const birthDelta = getBirthYear(a) - getBirthYear(b);
+                if (birthDelta !== 0) return birthDelta;
+
+                return getStableNodeOrder(a) - getStableNodeOrder(b);
             });
 
             const treeLayout = tree()
@@ -143,64 +285,18 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
             treeLayout(rootHierarchy);
 
-            // Calculate Barycentric X for Cross-Minimization
+            const layoutPasses = ['parent', 'children', 'parent', 'children'];
             const nodeMap = {};
-            rootHierarchy.descendants().forEach(n => nodeMap[n.id] = n);
 
-            rootHierarchy.descendants().forEach(node => {
-                let sumX = 0;
-                let count = 0;
-
-                // Average the X coordinates of ALL parents of ALL spouses in this block
-                node.data.chars.forEach(char => {
-                    [char.FatherId, char.MotherId].forEach(pid => {
-                        if (pid) {
-                            const pGroupId = charToGroupMap[pid.toString()];
-                            if (pGroupId && nodeMap[pGroupId]) {
-                                sumX += nodeMap[pGroupId].x;
-                                count++;
-                            }
-                        }
-                    });
-                });
-
-                // If the spouses don't have parents inside the graph, default to their own X
-                node.barycenterX = count > 0 ? sumX / count : node.x;
+            layoutPasses.forEach(emphasis => {
+                const metrics = buildOrderingMetrics(rootHierarchy, charToGroupMap, emphasis);
+                rootHierarchy.sort((a, b) => compareNodeOrder(a, b, metrics));
+                treeLayout(rootHierarchy);
             });
 
-            // Second Layout Pass: Sort Siblings Geographically
-            rootHierarchy.sort((a, b) => {
-                if (!a.parent || a.parent.id === 'WORLD_ROOT') return 0;
-
-                const getCategory = (childNode, parentNode) => {
-                    const childChar = childNode.data.TR;
-                    const fId = childChar.FatherId ? childChar.FatherId.toString() : null;
-                    const mId = childChar.MotherId ? childChar.MotherId.toString() : null;
-                    const pIds = parentNode.data.chars.map(c => c.id.toString());
-
-                    const hasFather = fId && pIds.includes(fId);
-                    const hasMother = mId && pIds.includes(mId);
-
-                    if (hasFather && !hasMother) return -1;
-                    if (!hasFather && hasMother) return 1;
-                    return 0; // Shared or other
-                };
-
-                const catA = getCategory(a, a.parent);
-                const catB = getCategory(b, b.parent);
-
-                // First rule: bastards must go to their respective edges
-                if (catA !== catB) return catA - catB;
-
-                // Second rule: Topological X sorting (pulls nodes towards their parent-in-laws)
-                return a.barycenterX - b.barycenterX;
+            rootHierarchy.descendants().forEach(n => {
+                nodeMap[n.id] = n;
             });
-
-            // Apply final layout based on geographical sort
-            treeLayout(rootHierarchy);
-
-            // Re-map nodes after final coordinates
-            rootHierarchy.descendants().forEach(n => nodeMap[n.id] = n);
 
             // Calculate bounds
             let minX = 0, maxX = 0, minY = 0, maxY = 0;
