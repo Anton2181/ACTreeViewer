@@ -70,6 +70,16 @@ const getNodeTreeKey = (node) => node?.data?.familyTree || `${getNodeClusterKey(
 
 const getNodeGroupHouse = (node) => node?.data?.groupPreferredHouse || getNodeSubgroupKey(node);
 
+const getParentPairKey = (fatherId, motherId) => `${fatherId || ''}|${motherId || ''}`;
+
+const getParentGroupIdForChar = (char, parentPairToGroupMap, charToGroupMap) => {
+    const pairGroupId = parentPairToGroupMap[getParentPairKey(char.FatherId, char.MotherId)];
+    if (pairGroupId) return pairGroupId;
+    if (char.FatherId && charToGroupMap[char.FatherId.toString()]) return charToGroupMap[char.FatherId.toString()];
+    if (char.MotherId && charToGroupMap[char.MotherId.toString()]) return charToGroupMap[char.MotherId.toString()];
+    return null;
+};
+
 const getMedian = (values, fallback = 0) => {
     if (!values.length) return fallback;
     const sorted = [...values].sort((a, b) => a - b);
@@ -100,7 +110,7 @@ const buildRelationshipAdjacency = (nodes, charToGroupMap, resolver) => {
     return { adjacency, nodeMap };
 };
 
-const assignLineageSubgroups = (d3Nodes, charToGroupMap) => {
+const assignLineageSubgroups = (d3Nodes, getParentGroupId) => {
     const nodeMap = {};
     d3Nodes.forEach(node => {
         nodeMap[node.id] = node;
@@ -116,14 +126,11 @@ const assignLineageSubgroups = (d3Nodes, charToGroupMap) => {
         stack.add(nodeId);
 
         const tr = node.TR || {};
-        const parentIds = [tr.FatherId, tr.MotherId].filter(Boolean).map(value => value.toString());
+        const parentGroupId = getParentGroupId(tr);
         let lineage = '';
 
-        for (const parentId of parentIds) {
-            const parentGroupId = charToGroupMap[parentId];
-            if (!parentGroupId || parentGroupId === nodeId) continue;
+        if (parentGroupId && parentGroupId !== nodeId) {
             lineage = resolveLineage(parentGroupId, stack);
-            if (lineage) break;
         }
 
         if (!lineage) lineage = node.primaryHouse || node.familyCluster || node.id;
@@ -142,15 +149,15 @@ const assignLineageSubgroups = (d3Nodes, charToGroupMap) => {
     });
 };
 
-const assignGraphGroups = (d3Nodes, charToGroupMap) => {
+const assignGraphGroups = (d3Nodes, getParentGroupId) => {
     const nodes = d3Nodes.filter(node => node.id !== 'WORLD_ROOT');
     const { adjacency, nodeMap } = buildRelationshipAdjacency(
         nodes,
-        charToGroupMap,
-        (_, char) => [char.FatherId, char.MotherId]
-            .filter(Boolean)
-            .map(parentId => charToGroupMap[parentId.toString()])
-            .filter(Boolean)
+        {},
+        (_, char) => {
+            const parentGroupId = getParentGroupId(char);
+            return parentGroupId ? [parentGroupId] : [];
+        }
     );
 
     const visited = new Set();
@@ -268,7 +275,7 @@ const assignTreeBlocks = (d3Nodes) => {
     });
 };
 
-const buildOrderingMetrics = (rootHierarchy, charToGroupMap, emphasis = 'parent') => {
+const buildOrderingMetrics = (rootHierarchy, getParentGroupId, emphasis = 'parent') => {
     const nodes = rootHierarchy.descendants();
     const nodeMap = {};
     nodes.forEach(node => {
@@ -333,13 +340,10 @@ const buildOrderingMetrics = (rootHierarchy, charToGroupMap, emphasis = 'parent'
         const uniqueParentGroups = new Set();
         const parentAnchors = [];
         node.data.chars.forEach(char => {
-            [char.FatherId, char.MotherId].forEach(parentId => {
-                if (!parentId) return;
-                const parentGroupId = charToGroupMap[parentId.toString()];
-                if (!parentGroupId || uniqueParentGroups.has(parentGroupId) || !nodeMap[parentGroupId]) return;
-                uniqueParentGroups.add(parentGroupId);
-                parentAnchors.push(nodeMap[parentGroupId].x);
-            });
+            const parentGroupId = getParentGroupId(char);
+            if (!parentGroupId || uniqueParentGroups.has(parentGroupId) || !nodeMap[parentGroupId]) return;
+            uniqueParentGroups.add(parentGroupId);
+            parentAnchors.push(nodeMap[parentGroupId].x);
         });
 
         const parentAnchor = average(parentAnchors, node.parent?.x ?? node.x);
@@ -532,30 +536,20 @@ const compareNodeOrder = (a, b, metrics, siblingRanks) => {
 
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
-    const { root, idToNode, charToGroup, bounds } = useMemo(() => {
-        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
-        // 1. Unify Spouses
-        const uf = new UnionFind();
-        data.forEach(char => uf.add(char.id.toString()));
+    const { root, idToNode, charToGroup, parentPairToGroup, bounds } = useMemo(() => {
+        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+        const byId = {};
         data.forEach(char => {
-            if (char.FatherId && char.MotherId) {
-                uf.union(char.FatherId.toString(), char.MotherId.toString());
-            }
-        });
-
-        // 2. Map characters to groups
-        const groupsMap = {};
-        data.forEach(char => {
-            const rootId = uf.find(char.id.toString());
-            if (!groupsMap[rootId]) groupsMap[rootId] = [];
-            groupsMap[rootId].push(char);
+            byId[char.id.toString()] = char;
         });
 
         const d3Nodes = [];
         const charToGroupMap = {};
+        const charGroupLists = {};
+        const parentPairToGroupMap = {};
 
-        // 3. Create Family Units
-        Object.values(groupsMap).forEach(groupChars => {
+        const addNodeForChars = (groupChars, explicitId) => {
+            if (!groupChars.length) return null;
             let tr = groupChars[0];
             let score = -1;
             groupChars.forEach(c => {
@@ -578,7 +572,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             });
 
             const d3Node = {
-                id: tr.id.toString(),
+                id: explicitId || tr.id.toString(),
                 TR: tr,
                 chars: groupChars,
                 primaryHouse: getDominantHouse(groupChars),
@@ -594,8 +588,39 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             d3Node.familyCluster = d3Node.id;
             d3Node.familySubgroup = d3Node.primaryHouse || d3Node.id;
 
-            groupChars.forEach(c => charToGroupMap[c.id.toString()] = d3Node.id);
+            groupChars.forEach(c => {
+                const charId = c.id.toString();
+                if (!charGroupLists[charId]) charGroupLists[charId] = [];
+                charGroupLists[charId].push(d3Node.id);
+                if (!charToGroupMap[charId]) charToGroupMap[charId] = d3Node.id;
+            });
             d3Nodes.push(d3Node);
+            return d3Node;
+        };
+
+        // 1. Create explicit parent-pair nodes so remarriages stay separate.
+        data.forEach(char => {
+            if (!char.FatherId && !char.MotherId) return;
+
+            const pairKey = getParentPairKey(char.FatherId, char.MotherId);
+            if (parentPairToGroupMap[pairKey]) return;
+
+            const groupChars = [
+                char.FatherId ? byId[char.FatherId.toString()] : null,
+                char.MotherId ? byId[char.MotherId.toString()] : null
+            ].filter(Boolean);
+
+            if (!groupChars.length) return;
+
+            const node = addNodeForChars(groupChars, `PAIR:${pairKey}`);
+            if (node) parentPairToGroupMap[pairKey] = node.id;
+        });
+
+        // 2. Add solo nodes for people who never appear in a partnership node.
+        data.forEach(char => {
+            const charId = char.id.toString();
+            if (charGroupLists[charId]?.length) return;
+            addNodeForChars([char], `SOLO:${charId}`);
         });
 
         d3Nodes.push({
@@ -613,16 +638,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         });
 
         // 4. Resolve topologies
+        const resolveParentGroupId = (char) => getParentGroupIdForChar(char, parentPairToGroupMap, charToGroupMap);
         const getSafeParent = (nodeId) => {
             const node = d3Nodes.find(n => n.id === nodeId);
             if (!node || node.id === 'WORLD_ROOT') return null;
 
-            const tr = node.TR;
-            let parentGroupId = null;
-            if (tr.FatherId) parentGroupId = charToGroupMap[tr.FatherId.toString()];
-            if (!parentGroupId && tr.MotherId) parentGroupId = charToGroupMap[tr.MotherId.toString()];
-
-            return parentGroupId || 'WORLD_ROOT';
+            return resolveParentGroupId(node.TR) || 'WORLD_ROOT';
         };
 
         d3Nodes.forEach(n => {
@@ -631,8 +652,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             }
         });
 
-        assignGraphGroups(d3Nodes, charToGroupMap);
-        assignLineageSubgroups(d3Nodes, charToGroupMap);
+        assignGraphGroups(d3Nodes, resolveParentGroupId);
+        assignLineageSubgroups(d3Nodes, resolveParentGroupId);
         assignTreeBlocks(d3Nodes);
 
         // 5. Break biological loop errors
@@ -697,7 +718,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             const nodeMap = {};
 
             layoutPasses.forEach(emphasis => {
-                const metrics = buildOrderingMetrics(rootHierarchy, charToGroupMap, emphasis);
+                const metrics = buildOrderingMetrics(rootHierarchy, resolveParentGroupId, emphasis);
                 const siblingRanks = buildSiblingRanks(rootHierarchy, metrics);
                 rootHierarchy.sort((a, b) => compareNodeOrder(a, b, metrics, siblingRanks));
                 treeLayout(rootHierarchy);
@@ -720,10 +741,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 maxY = Math.max(maxY, n.y + 120);
             });
 
-            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, bounds: { minX, maxX, minY, maxY } };
+            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, parentPairToGroup: parentPairToGroupMap, bounds: { minX, maxX, minY, maxY } };
         } catch (e) {
             console.error("Tree layout error:", e);
-            return { root: null, idToNode: {}, charToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+            return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         }
     }, [data]);
 
@@ -747,6 +768,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         if (!node) return 0;
         return node.x + getCharXLocal(node, charId);
     };
+
+    const resolveParentGroupId = (char) => getParentGroupIdForChar(char, parentPairToGroup, charToGroup);
 
     const getParentMidpointGlobal = (parentGroupNode, childChar) => {
         if (parentGroupNode.id === 'WORLD_ROOT') return parentGroupNode.x;
@@ -1138,10 +1161,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                         return node.data.chars.map((char) => {
                             if (char.id.toString() === node.data.TR.id.toString()) return null;
 
-                            const parentId = char.FatherId || char.MotherId;
-                            if (!parentId) return null;
-
-                            const parentGroupId = charToGroup[parentId.toString()];
+                            const parentGroupId = resolveParentGroupId(char);
                             if (!parentGroupId) return null;
 
                             const parentGroupNode = idToNode[parentGroupId];
