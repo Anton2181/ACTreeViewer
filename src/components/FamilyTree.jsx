@@ -536,8 +536,8 @@ const compareNodeOrder = (a, b, metrics, siblingRanks) => {
 
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
-    const { root, idToNode, charToGroup, parentPairToGroup, bounds } = useMemo(() => {
-        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+    const { root, idToNode, charToGroup, charToGroups, parentPairToGroup, bounds } = useMemo(() => {
+        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, charToGroups: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         const byId = {};
         data.forEach(char => {
             byId[char.id.toString()] = char;
@@ -741,10 +741,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 maxY = Math.max(maxY, n.y + 120);
             });
 
-            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, parentPairToGroup: parentPairToGroupMap, bounds: { minX, maxX, minY, maxY } };
+            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, charToGroups: charGroupLists, parentPairToGroup: parentPairToGroupMap, bounds: { minX, maxX, minY, maxY } };
         } catch (e) {
             console.error("Tree layout error:", e);
-            return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+            return { root: null, idToNode: {}, charToGroup: {}, charToGroups: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         }
     }, [data]);
 
@@ -752,10 +752,17 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         return <div className="text-gray-400 p-8">No valid tree data found.</div>;
     }
 
+    const getRenderedChars = (node) => (
+        node.data.chars.filter(char => {
+            const primaryGroupId = charToGroups[char.id.toString()]?.[0];
+            return !primaryGroupId || primaryGroupId === node.id;
+        })
+    );
+
     // Helper geometry for clustered layouts
     const getCharXLocal = (node, charId) => {
-        const chars = node.data.chars;
-        if (!chars) return 0;
+        const chars = getRenderedChars(node);
+        if (!chars || chars.length === 0) return 0;
         const index = chars.findIndex(c => c.id.toString() === charId.toString());
         if (index === -1) return 0;
         const N = chars.length;
@@ -764,6 +771,14 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     };
 
     const getCharXGlobal = (nodeId, charId) => {
+        const primaryGroupId = charToGroups[charId?.toString?.() || charId]?.[0];
+        if (primaryGroupId && primaryGroupId !== nodeId) {
+            const primaryNode = idToNode[primaryGroupId];
+            if (primaryNode) {
+                return primaryNode.x + getCharXLocal(primaryNode, charId);
+            }
+        }
+
         const node = idToNode[nodeId];
         if (!node) return 0;
         return node.x + getCharXLocal(node, charId);
@@ -1186,29 +1201,45 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                         });
                     })}
 
+                    {/* Partner Connectors */}
+                    {root.descendants().map((node) => {
+                        if (node.id === 'WORLD_ROOT' || node.data.chars.length < 2) return null;
+
+                        const [leftChar, rightChar] = node.data.chars;
+                        const leftX = getCharXGlobal(node.id, leftChar.id.toString()) + offsetX;
+                        const rightX = getCharXGlobal(node.id, rightChar.id.toString()) + offsetX;
+                        const connectorY = node.y + offsetY;
+
+                        return (
+                            <path
+                                key={`partner-${node.id}`}
+                                className={`${theme.link} opacity-50 fill-none`}
+                                strokeWidth={2}
+                                d={`
+                      M ${leftX},${connectorY}
+                      L ${rightX},${connectorY}
+                    `}
+                            />
+                        );
+                    })}
+
                     {/* Draw Family Units */}
                     {root.descendants().map(node => {
                         if (node.id === 'WORLD_ROOT') return null;
 
-                        const chars = node.data.chars;
+                        const chars = getRenderedChars(node);
                         const N = chars.length;
+                        if (N === 0) return null;
                         const W = 190 * N + 20 * (N - 1);
 
                         return (
                             <g key={node.id} transform={`translate(${node.x + offsetX},${node.y + offsetY})`}>
-                                {/* Marriage horizontal line between spouses in the cluster */}
-                                {N > 1 && (
-                                    <line
-                                        x1={-W / 2 + 95}
-                                        y1={0}
-                                        x2={W / 2 - 95}
-                                        y2={0}
-                                        className={`${theme.link} opacity-50`}
-                                        strokeWidth={2}
-                                    />
-                                )}
-
                                 {chars.map(data => {
+                                    const primaryGroupId = charToGroups[data.id.toString()]?.[0];
+                                    if (primaryGroupId && primaryGroupId !== node.id) {
+                                        return null;
+                                    }
+
                                     const charXLocal = getCharXLocal(node, data.id.toString());
                                     const isHighlighted = highlightedCharId === data.id.toString();
                                     const sexColor = data['Sex']?.toLowerCase().startsWith('f') ? '#fb7185' :
