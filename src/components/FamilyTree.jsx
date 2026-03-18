@@ -19,8 +19,8 @@ class UnionFind {
 
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
-    const { root, idToNode, charToGroup } = useMemo(() => {
-        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {} };
+    const { root, idToNode, charToGroup, bounds } = useMemo(() => {
+        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         // 1. Unify Spouses
         const uf = new UnionFind();
         data.forEach(char => uf.add(char.id.toString()));
@@ -202,10 +202,23 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             // Re-map nodes after final coordinates
             rootHierarchy.descendants().forEach(n => nodeMap[n.id] = n);
 
-            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap };
+            // Calculate bounds
+            let minX = 0, maxX = 0, minY = 0, maxY = 0;
+            rootHierarchy.descendants().forEach(n => {
+                if (n.id === 'WORLD_ROOT') return;
+                const N = n.data.chars.length;
+                const W = 190 * N + 20 * (N - 1);
+                const halfW = W / 2;
+                minX = Math.min(minX, n.x - halfW);
+                maxX = Math.max(maxX, n.x + halfW);
+                minY = Math.min(minY, n.y);
+                maxY = Math.max(maxY, n.y + 120);
+            });
+
+            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, bounds: { minX, maxX, minY, maxY } };
         } catch (e) {
             console.error("Tree layout error:", e);
-            return { root: null, idToNode: {}, charToGroup: {} };
+            return { root: null, idToNode: {}, charToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         }
     }, [data]);
 
@@ -248,18 +261,19 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         return xSum / count;
     };
 
-    // Provide a massive canvas for free panning
-    const CANVAS_WIDTH = 20000;
-    const CANVAS_HEIGHT = 20000;
-
-    // Place the root node in the upper-middle of the canvas
-    const offsetX = CANVAS_WIDTH / 2;
-    const offsetY = 2000;
-
     const containerRef = useRef(null);
     const pointerDragRef = React.useRef({ isDragging: false, startX: 0, startY: 0 });
     const [zoom, setZoom] = useState(1);
     const zoomRef = React.useRef(1);
+    const [scrollRatio, setScrollRatio] = useState(0);
+
+    // Dynamic canvas size
+    const CANVAS_WIDTH = (bounds.maxX - bounds.minX) + 400;
+    const CANVAS_HEIGHT = Math.max(window.innerHeight, (bounds.maxY - bounds.minY) * 2);
+
+    // Place the root node in the upper-middle of the canvas
+    const offsetX = -bounds.minX + 200;
+    const offsetY = 80;
 
     // Use a ref for pinch state to avoid stale closures
     const pinchRef = React.useRef(null); // { dist, zoom }
@@ -271,6 +285,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const panStartRef = React.useRef({ x: 0, y: 0 });
     // Char ID to scroll to after the next re-render (set before filter change, consumed after)
     const scrollToCharRef = React.useRef(null);
+    // Pivot for zoom stabilization
+    const zoomPivotRef = React.useRef(null); // { unscaledX, unscaledY, mouseX, mouseY }
 
     // Search + Zoom State
     const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -343,19 +359,31 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
     // Apply zoom while keeping the viewport center fixed
     const applyZoom = (newZoom) => {
-        newZoom = Math.min(2, Math.max(0.5, newZoom));
+        newZoom = Math.min(2, Math.max(0.75, newZoom));
         const el = containerRef.current;
         if (!el) { setZoom(newZoom); zoomRef.current = newZoom; return; }
+        
         const prevZoom = zoomRef.current;
-        const cx = el.scrollLeft + el.clientWidth / 2;
-        const cy = el.scrollTop + el.clientHeight / 2;
-        const unscaledX = cx / prevZoom;
-        const unscaledY = cy / prevZoom;
-        el.scrollLeft = unscaledX * newZoom - el.clientWidth / 2;
-        el.scrollTop = unscaledY * newZoom - el.clientHeight / 2;
-        zoomRef.current = newZoom;
+        const mouseX = el.clientWidth / 2;
+        const mouseY = el.clientHeight / 2;
+        const unscaledX = (el.scrollLeft + mouseX) / prevZoom;
+        const unscaledY = (el.scrollTop + mouseY) / prevZoom;
+
+        zoomPivotRef.current = { unscaledX, unscaledY, mouseX, mouseY };
         setZoom(newZoom);
     };
+
+    React.useLayoutEffect(() => {
+        if (zoomPivotRef.current) {
+            const el = containerRef.current;
+            if (el) {
+                const { unscaledX, unscaledY, mouseX, mouseY } = zoomPivotRef.current;
+                el.scrollLeft = unscaledX * zoom - mouseX;
+                el.scrollTop = unscaledY * zoom - mouseY;
+            }
+            zoomPivotRef.current = null;
+        }
+    }, [zoom]);
 
     // Shared helper: scroll so that the given SVG coordinate is centered in the viewport
     const scrollToSvg = (svgX, svgY, smooth = true) => {
@@ -439,6 +467,25 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         }
     };
 
+    const handleScroll = () => {
+        const el = containerRef.current;
+        if (!el) return;
+        const maxScroll = el.scrollWidth - el.clientWidth;
+        if (maxScroll > 0) {
+            setScrollRatio(el.scrollLeft / maxScroll);
+        }
+    };
+
+    const handleSliderChange = (e) => {
+        const ratio = parseFloat(e.target.value);
+        setScrollRatio(ratio);
+        const el = containerRef.current;
+        if (el) {
+            const maxScroll = el.scrollWidth - el.clientWidth;
+            el.scrollLeft = ratio * maxScroll;
+        }
+    };
+
     // Handle Wheel for Zoom
     React.useEffect(() => {
         const el = containerRef.current;
@@ -448,33 +495,20 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             const delta = e.deltaY;
 
             setZoom(prev => {
-                let newZoom = prev - delta * 0.002;
-                newZoom = Math.min(Math.max(0.1, newZoom), 3);
+                const zoomFactor = 1.1;
+                const factor = delta > 0 ? 1 / zoomFactor : zoomFactor;
+                let newZoom = prev * factor;
+                newZoom = Math.min(Math.max(0.75, newZoom), 3);
 
-                // Adjust scroll position to keep mouse at same relative spot
+                if (newZoom === prev) return prev;
+
                 const rect = el.getBoundingClientRect();
                 const mouseX = e.clientX - rect.left;
                 const mouseY = e.clientY - rect.top;
+                const unscaledX = (el.scrollLeft + mouseX) / prev;
+                const unscaledY = (el.scrollTop + mouseY) / prev;
 
-                const scrollX = el.scrollLeft;
-                const scrollY = el.scrollTop;
-
-                const canvasX = scrollX + mouseX;
-                const canvasY = scrollY + mouseY;
-
-                const unscaledX = canvasX / prev;
-                const unscaledY = canvasY / prev;
-
-                const newScrollX = unscaledX * newZoom - mouseX;
-                const newScrollY = unscaledY * newZoom - mouseY;
-
-                requestAnimationFrame(() => {
-                    if (el) {
-                        el.scrollLeft = newScrollX;
-                        el.scrollTop = newScrollY;
-                    }
-                });
-
+                zoomPivotRef.current = { unscaledX, unscaledY, mouseX, mouseY };
                 return newZoom;
             });
         };
@@ -562,7 +596,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             onPointerUp={onPointerUp}
             onPointerLeave={onPointerUp}
             onPointerCancel={onPointerUp}
-            className={`w-full h-full overflow-hidden ${theme.bg} text-black absolute inset-0 transition-colors duration-500 cursor-grab touch-none`}
+            onScroll={handleScroll}
+            className={`w-full h-full overflow-auto ${theme.bg} text-black absolute inset-0 transition-colors duration-500 cursor-grab touch-none`}
         >
             <svg width={CANVAS_WIDTH * zoom} height={CANVAS_HEIGHT * zoom} className="mx-auto border-none outline-none overflow-hidden">
                 <g style={{ transform: `scale(${zoom})`, transformOrigin: '0 0' }}>
@@ -899,6 +934,23 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                 </button>
+            </div>
+
+            {/* Horizontal Scroll Slider */}
+            <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 w-64 md:w-96 p-4 rounded-2xl shadow-2xl border backdrop-blur-md z-50 flex items-center gap-4 ${theme.cardBg} ${theme.border}`}>
+                <svg className={`w-5 h-5 ${theme.textSecondary}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+                <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.001"
+                    value={scrollRatio}
+                    onChange={handleSliderChange}
+                    className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600 dark:bg-gray-700"
+                    data-no-pan
+                />
             </div>
         </div>
     );
