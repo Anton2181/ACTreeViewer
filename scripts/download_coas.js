@@ -54,18 +54,23 @@ async function downloadCoas() {
                     fs.mkdirSync(COAS_DIR, { recursive: true });
                 }
 
+                const missingHouses = [];
+
                 for (const house of houses) {
                     const sanitizedName = house.replace(/\s+/g, '_');
-                    const fileName = `House_${sanitizedName}.svg`;
-                    const filePath = path.join(COAS_DIR, fileName);
+                    const svgFileName = `House_${sanitizedName}.svg`;
+                    const pngFileName = `House_${sanitizedName}.png`;
+                    
+                    const svgPath = path.join(COAS_DIR, svgFileName);
+                    const pngPath = path.join(COAS_DIR, pngFileName);
 
-                    if (fs.existsSync(filePath)) {
-                        console.log(`Skipping ${fileName} (already exists)`);
+                    if (fs.existsSync(svgPath) || fs.existsSync(pngPath)) {
+                        console.log(`Skipping ${house} (already exists as SVG or PNG)`);
                         continue;
                     }
 
-                    const imgUrl = `https://wappenwiki.org/index.php?title=Special:FilePath/${fileName}`;
-                    console.log(`Downloading ${fileName}...`);
+                    const imgUrl = `https://wappenwiki.org/index.php?title=Special:FilePath/${svgFileName}`;
+                    console.log(`Downloading ${svgFileName}...`);
 
                     try {
                         const imgRes = await fetch(imgUrl);
@@ -74,20 +79,30 @@ async function downloadCoas() {
                             const contentType = imgRes.headers.get('content-type');
                             if (contentType && contentType.includes('image/svg')) {
                                 const buffer = await imgRes.arrayBuffer();
-                                fs.writeFileSync(filePath, Buffer.from(buffer));
-                                console.log(`✓ Saved ${fileName}`);
+                                fs.writeFileSync(svgPath, Buffer.from(buffer));
+                                console.log(`✓ Saved ${svgFileName}`);
                             } else {
-                                console.log(`✗ ${fileName} not an SVG on WappenWiki, omitting.`);
+                                console.log(`✗ ${svgFileName} not an SVG on WappenWiki, omitting.`);
+                                missingHouses.push(house);
                             }
                         } else {
-                            console.log(`✗ Could not find ${fileName} on WappenWiki (Status: ${imgRes.status})`);
+                            console.log(`✗ Could not find ${svgFileName} on WappenWiki (Status: ${imgRes.status})`);
+                            missingHouses.push(house);
                         }
                     } catch (err) {
-                        console.error(`Error downloading ${fileName}:`, err.message);
+                        console.error(`Error downloading ${svgFileName}:`, err.message);
+                        missingHouses.push(house);
                     }
                 }
 
-                console.log("Finished syncing local Coat of Arms!");
+                console.log("\nFinished syncing local Coat of Arms!");
+                if (missingHouses.length > 0) {
+                    console.log("\n--- MISSING COATS OF ARMS ---");
+                    console.log(missingHouses.sort().join('\n'));
+                    console.log(`Total missing: ${missingHouses.length}`);
+                } else {
+                    console.log("All house coats of arms found!");
+                }
             }
         });
 
