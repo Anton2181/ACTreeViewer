@@ -1,4 +1,5 @@
 import Papa from 'papaparse';
+import { buildTestFamilyCharacters } from './testFamilyData';
 
 // Google Sheets CSV publish link
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1WKSeqB1yX91A2TyD9Lie-mwNkc4qLIrN-pIPbX2knac/export?format=csv&gid=0";
@@ -23,7 +24,10 @@ export const fetchAndParseData = async () => {
                     }
                     resolve({
                         year: currentYear,
-                        characters: processParsedData(rawData)
+                        characters: [
+                            ...processParsedData(rawData),
+                            ...(import.meta.env.DEV ? buildTestFamilyCharacters() : [])
+                        ]
                     });
                 },
                 error: (error) => {
