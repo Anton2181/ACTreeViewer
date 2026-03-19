@@ -26,7 +26,7 @@ export const fetchAndParseData = async () => {
                         year: currentYear,
                         characters: [
                             ...processParsedData(rawData),
-                            ...buildTestFamilyCharacters()
+                            ...(import.meta.env.DEV ? buildTestFamilyCharacters() : [])
                         ]
                     });
                 },

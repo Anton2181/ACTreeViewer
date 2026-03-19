@@ -553,6 +553,66 @@ const compareNodeOrder = (a, b, metrics, siblingRanks) => {
     return getStableNodeOrder(a) - getStableNodeOrder(b);
 };
 
+const alignNodeLevels = (rootHierarchy, getParentGroupIds, levelHeight = 250) => {
+    const nodes = rootHierarchy.descendants();
+    const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+    const levels = new Map(nodes.map((node) => [node.id, node.depth]));
+
+    for (let pass = 0; pass < nodes.length * 4; pass++) {
+        let changed = false;
+
+        nodes.forEach((node) => {
+            if (node.id === 'WORLD_ROOT') return;
+
+            const parentGroupIds = [...new Set(
+                node.data.chars
+                    .flatMap((char) => getParentGroupIds(char))
+                    .filter((groupId) => nodeMap.has(groupId))
+            )];
+
+            if (!parentGroupIds.length) {
+                if ((levels.get(node.id) || 0) < 1) {
+                    levels.set(node.id, 1);
+                    changed = true;
+                }
+                return;
+            }
+
+            const requiredLevel = Math.max(...parentGroupIds.map((groupId) => levels.get(groupId) || 0)) + 1;
+            if ((levels.get(node.id) || 0) < requiredLevel) {
+                levels.set(node.id, requiredLevel);
+                changed = true;
+            }
+        });
+
+        nodes.forEach((node) => {
+            if (node.id === 'WORLD_ROOT') return;
+
+            const parentGroupIds = [...new Set(
+                node.data.chars
+                    .flatMap((char) => getParentGroupIds(char))
+                    .filter((groupId) => nodeMap.has(groupId))
+            )];
+
+            if (parentGroupIds.length < 2) return;
+
+            const sharedLevel = Math.max(...parentGroupIds.map((groupId) => levels.get(groupId) || 0));
+            parentGroupIds.forEach((groupId) => {
+                if ((levels.get(groupId) || 0) < sharedLevel) {
+                    levels.set(groupId, sharedLevel);
+                    changed = true;
+                }
+            });
+        });
+
+        if (!changed) break;
+    }
+
+    nodes.forEach((node) => {
+        node.y = (levels.get(node.id) || 0) * levelHeight;
+    });
+};
+
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
     const { root, idToNode, charToGroup, parentPairToGroup, bounds } = useMemo(() => {
@@ -773,6 +833,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 treeLayout(rootHierarchy);
             });
 
+            alignNodeLevels(rootHierarchy, resolveParentGroupIds, 250);
+
             rootHierarchy.descendants().forEach(n => {
                 nodeMap[n.id] = n;
             });
@@ -811,6 +873,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
         return getCharacterDisplayName(charDirectory.get(char[idField].toString()));
     };
+
+    const showDevMetadata = import.meta.env.DEV;
 
     if (!root) {
         return <div className="text-gray-400 p-8">No valid tree data found.</div>;
@@ -1335,10 +1399,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                             )}
 
                                             {/* Character ID */}
-                                            <text x={85} y={15} fill={textSecondary} fontSize={9} fontFamily="monospace" textAnchor="end" opacity={0.8}>
-                                                #{data.id}
-                                            </text>
-                                            {node.data.blockHierarchyId && (
+                                            {showDevMetadata && (
+                                                <text x={85} y={15} fill={textSecondary} fontSize={9} fontFamily="monospace" textAnchor="end" opacity={0.8}>
+                                                    #{data.id}
+                                                </text>
+                                            )}
+                                            {showDevMetadata && node.data.blockHierarchyId && (
                                                 <text x={-85} y={15} fill={textSecondary} fontSize={7} fontFamily="monospace" textAnchor="start" opacity={0.75}>
                                                     {node.data.blockHierarchyId}
                                                 </text>
