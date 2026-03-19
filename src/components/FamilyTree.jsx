@@ -557,6 +557,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
     const { root, idToNode, charToGroup, parentPairToGroup, bounds } = useMemo(() => {
         if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+        const relationshipSource = allData?.length ? allData : data;
         const byId = {};
         data.forEach(char => {
             byId[char.id.toString()] = char;
@@ -568,7 +569,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const parentPairToGroupMap = {};
         const parentPairMemberships = new Map();
 
-        data.forEach(char => {
+        relationshipSource.forEach(char => {
             const pairKey = getParentPairKey(char.FatherId, char.MotherId);
             if (!char.FatherId && !char.MotherId) return;
 
@@ -794,7 +795,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             console.error("Tree layout error:", e);
             return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         }
-    }, [data]);
+    }, [allData, data]);
 
     const charDirectory = useMemo(() => {
         const source = allData?.length ? allData : data;
