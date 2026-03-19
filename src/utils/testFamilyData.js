@@ -5,9 +5,17 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Testwell',
         Sex: 'Male',
         'Year of Birth': '40',
+        Age: '54',
         Claim: 'Test Patriarch',
+        Father: '',
+        Mother: '',
+        'Nr. of Children': '4',
+        'Child 1': 'Ser Alaric',
+        'Child 2': 'Lady Betha',
+        'Child 3': 'Jon Waters',
         'Father (ID)': '',
-        'Mother (ID)': ''
+        'Mother (ID)': '',
+        Residence: 'Testhall'
     },
     {
         'Character ID (numeric)': '9002',
@@ -15,9 +23,16 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Testwell',
         Sex: 'Female',
         'Year of Birth': '42',
+        Age: '52',
         Claim: 'First Wife',
+        Father: '',
+        Mother: '',
+        'Nr. of Children': '2',
+        'Child 1': 'Ser Alaric',
+        'Child 2': 'Lady Betha',
         'Father (ID)': '',
-        'Mother (ID)': ''
+        'Mother (ID)': '',
+        Residence: 'Testhall'
     },
     {
         'Character ID (numeric)': '9003',
@@ -25,9 +40,17 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Rivers',
         Sex: 'Female',
         'Year of Birth': '45',
+        Age: '49',
         Claim: 'Second Wife',
+        Father: '',
+        Mother: '',
+        'Nr. of Children': '3',
+        'Child 1': 'Jon Waters',
+        'Child 2': 'Lady Alys',
+        'Child 3': 'Lady Myrielle',
         'Father (ID)': '',
-        'Mother (ID)': ''
+        'Mother (ID)': '',
+        Residence: 'Riverwatch'
     },
     {
         'Character ID (numeric)': '9004',
@@ -35,9 +58,17 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Testwell',
         Sex: 'Male',
         'Year of Birth': '65',
+        Age: '29',
         Claim: 'Legitimate Son',
+        Father: 'Lord Rowan House Testwell',
+        Mother: 'Lady Elinor House Testwell',
+        'Nr. of Children': '3',
+        'Child 1': 'Ser Corwyn',
+        'Child 2': 'Lady Cyrene',
+        'Child 3': 'Mya Stone',
         'Father (ID)': '9001',
-        'Mother (ID)': '9002'
+        'Mother (ID)': '9002',
+        Residence: 'Testhall'
     },
     {
         'Character ID (numeric)': '9005',
@@ -45,9 +76,14 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Testwell',
         Sex: 'Female',
         'Year of Birth': '68',
+        Age: '26',
         Claim: 'Legitimate Daughter',
+        Father: 'Lord Rowan House Testwell',
+        Mother: 'Lady Elinor House Testwell',
+        'Nr. of Children': '0',
         'Father (ID)': '9001',
-        'Mother (ID)': '9002'
+        'Mother (ID)': '9002',
+        Residence: 'Testhall'
     },
     {
         'Character ID (numeric)': '9006',
@@ -55,9 +91,14 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Waters',
         Sex: 'Male',
         'Year of Birth': '70',
+        Age: '24',
         Claim: 'Bastard Son',
+        Father: 'Lord Rowan House Testwell',
+        Mother: 'Lady Marga House Rivers',
+        'Nr. of Children': '0',
         'Father (ID)': '9001',
-        'Mother (ID)': '9003'
+        'Mother (ID)': '9003',
+        Residence: 'Riverwatch'
     },
     {
         'Character ID (numeric)': '9007',
@@ -65,9 +106,15 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Reed',
         Sex: 'Female',
         'Year of Birth': '43',
-        Claim: 'First Husband',
+        Age: '51',
+        Claim: 'House Reed',
+        Father: '',
+        Mother: '',
+        'Nr. of Children': '1',
+        'Child 1': 'Lady Alys',
         'Father (ID)': '',
-        'Mother (ID)': ''
+        'Mother (ID)': '',
+        Residence: 'Greywater'
     },
     {
         'Character ID (numeric)': '9008',
@@ -75,9 +122,16 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Reed',
         Sex: 'Female',
         'Year of Birth': '66',
+        Age: '28',
         Claim: 'Daughter by First Husband',
+        Father: 'Lady Serra House Reed',
+        Mother: 'Lady Marga House Rivers',
+        'Nr. of Children': '2',
+        'Child 1': 'Ser Corwyn',
+        'Child 2': 'Lady Cyrene',
         'Father (ID)': '9007',
-        'Mother (ID)': '9003'
+        'Mother (ID)': '9003',
+        Residence: 'Greywater'
     },
     {
         'Character ID (numeric)': '9009',
@@ -85,9 +139,14 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Vale',
         Sex: 'Female',
         'Year of Birth': '71',
+        Age: '23',
         Claim: 'Mother-Known Bastard',
+        Father: '',
+        Mother: 'Lady Marga House Rivers',
+        'Nr. of Children': '0',
         'Father (ID)': '',
-        'Mother (ID)': '9003'
+        'Mother (ID)': '9003',
+        Residence: 'Gulltown'
     },
     {
         'Character ID (numeric)': '9010',
@@ -95,9 +154,14 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Testwell',
         Sex: 'Male',
         'Year of Birth': '67',
+        Age: '27',
         Claim: 'Son of Alaric',
+        Father: 'Ser Alaric House Testwell',
+        Mother: 'Lady Alys House Reed',
+        'Nr. of Children': '0',
         'Father (ID)': '9004',
-        'Mother (ID)': '9008'
+        'Mother (ID)': '9008',
+        Residence: 'Testhall'
     },
     {
         'Character ID (numeric)': '9011',
@@ -105,9 +169,14 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Reed',
         Sex: 'Female',
         'Year of Birth': '69',
+        Age: '25',
         Claim: 'Daughter of Alaric',
+        Father: 'Ser Alaric House Testwell',
+        Mother: 'Lady Alys House Reed',
+        'Nr. of Children': '0',
         'Father (ID)': '9004',
-        'Mother (ID)': '9008'
+        'Mother (ID)': '9008',
+        Residence: 'Greywater'
     },
     {
         'Character ID (numeric)': '9012',
@@ -115,9 +184,14 @@ const TEST_FAMILY_CHARACTERS = [
         House: 'House Stone',
         Sex: 'Female',
         'Year of Birth': '74',
+        Age: '20',
         Claim: 'Father-Known Bastard',
+        Father: 'Ser Alaric House Testwell',
+        Mother: '',
+        'Nr. of Children': '0',
         'Father (ID)': '9004',
-        'Mother (ID)': ''
+        'Mother (ID)': '',
+        Residence: 'Testhall'
     }
 ];
 

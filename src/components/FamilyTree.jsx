@@ -79,23 +79,35 @@ const getNodeGroupHouse = (node) => node?.data?.groupPreferredHouse || getNodeSu
 
 const getParentPairKey = (fatherId, motherId) => `${fatherId || ''}|${motherId || ''}`;
 
-const getParentGroupIdsForChar = (char, parentPairToGroupMap, charToGroupMap) => {
-    const pairGroupId = parentPairToGroupMap[getParentPairKey(char.FatherId, char.MotherId)];
-    if (pairGroupId) return [pairGroupId];
+const getParentGroupIdsForChar = (char, parentPairToGroupMap, charToGroupMap, charGroupLists = {}) => {
+    const fatherId = char.FatherId ? char.FatherId.toString() : '';
+    const motherId = char.MotherId ? char.MotherId.toString() : '';
 
-    const parentGroupIds = [];
-    if (char.FatherId && charToGroupMap[char.FatherId.toString()]) {
-        parentGroupIds.push(charToGroupMap[char.FatherId.toString()]);
-    }
-    if (char.MotherId && charToGroupMap[char.MotherId.toString()]) {
-        parentGroupIds.push(charToGroupMap[char.MotherId.toString()]);
+    if (fatherId && motherId) {
+        const pairGroupId = parentPairToGroupMap[getParentPairKey(char.FatherId, char.MotherId)];
+        if (pairGroupId) return [pairGroupId];
+
+        return [
+            charToGroupMap[fatherId],
+            charToGroupMap[motherId]
+        ].filter(Boolean);
     }
 
-    return [...new Set(parentGroupIds)];
+    if (fatherId) {
+        const pairGroupId = (charGroupLists[fatherId] || []).find((groupId) => groupId.startsWith('PAIR:'));
+        return [pairGroupId || charToGroupMap[fatherId]].filter(Boolean);
+    }
+
+    if (motherId) {
+        const pairGroupId = (charGroupLists[motherId] || []).find((groupId) => groupId.startsWith('PAIR:'));
+        return [pairGroupId || charToGroupMap[motherId]].filter(Boolean);
+    }
+
+    return [];
 };
 
-const getPrimaryParentGroupIdForChar = (char, parentPairToGroupMap, charToGroupMap) => {
-    const [primaryParentGroupId] = getParentGroupIdsForChar(char, parentPairToGroupMap, charToGroupMap);
+const getPrimaryParentGroupIdForChar = (char, parentPairToGroupMap, charToGroupMap, charGroupLists = {}) => {
+    const [primaryParentGroupId] = getParentGroupIdsForChar(char, parentPairToGroupMap, charToGroupMap, charGroupLists);
     return primaryParentGroupId || null;
 };
 
@@ -615,8 +627,8 @@ const alignNodeLevels = (rootHierarchy, getParentGroupIds, levelHeight = 250) =>
 
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
-    const { root, idToNode, charToGroup, parentPairToGroup, bounds } = useMemo(() => {
-        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+    const { root, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = useMemo(() => {
+        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         const relationshipSource = allData?.length ? allData : data;
         const byId = {};
         data.forEach(char => {
@@ -630,8 +642,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const parentPairMemberships = new Map();
 
         relationshipSource.forEach(char => {
+            if (!char.FatherId || !char.MotherId) return;
             const pairKey = getParentPairKey(char.FatherId, char.MotherId);
-            if (!char.FatherId && !char.MotherId) return;
 
             [char.FatherId, char.MotherId]
                 .filter(Boolean)
@@ -700,9 +712,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             return d3Node;
         };
 
-        // 1. Create explicit parent-pair nodes when both parents only appear in one pairing.
+        // 1. Create explicit parent-pair nodes only for complete known-parent pairings.
         data.forEach(char => {
-            if (!char.FatherId && !char.MotherId) return;
+            if (!char.FatherId || !char.MotherId) return;
             if (
                 (char.FatherId && polygamousParentIds.has(char.FatherId.toString()))
                 || (char.MotherId && polygamousParentIds.has(char.MotherId.toString()))
@@ -746,8 +758,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         });
 
         // 4. Resolve topologies
-        const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroupMap, charToGroupMap);
-        const resolvePrimaryParentGroupId = (char) => getPrimaryParentGroupIdForChar(char, parentPairToGroupMap, charToGroupMap);
+        const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroupMap, charToGroupMap, charGroupLists);
+        const resolvePrimaryParentGroupId = (char) => getPrimaryParentGroupIdForChar(char, parentPairToGroupMap, charToGroupMap, charGroupLists);
         const getSafeParent = (nodeId) => {
             const node = d3Nodes.find(n => n.id === nodeId);
             if (!node || node.id === 'WORLD_ROOT') return null;
@@ -852,10 +864,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 maxY = Math.max(maxY, n.y + 120);
             });
 
-            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, parentPairToGroup: parentPairToGroupMap, bounds: { minX, maxX, minY, maxY } };
+            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, charGroupLists, parentPairToGroup: parentPairToGroupMap, bounds: { minX, maxX, minY, maxY } };
         } catch (e) {
             console.error("Tree layout error:", e);
-            return { root: null, idToNode: {}, charToGroup: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+            return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         }
     }, [allData, data]);
 
@@ -897,7 +909,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         return node.x + getCharXLocal(node, charId);
     };
 
-    const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroup, charToGroup);
+    const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroup, charToGroup, charGroupLists);
 
     const getParentMidpointGlobal = (parentGroupNode, childChar) => {
         if (parentGroupNode.id === 'WORLD_ROOT') return parentGroupNode.x;
