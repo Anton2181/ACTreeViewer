@@ -1483,7 +1483,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             <button
                 onClick={() => setIsZoomOpen(o => !o)}
                 data-no-pan
-                className={`fixed bottom-[104px] right-8 p-4 rounded-full shadow-2xl border backdrop-blur-md transition-all duration-300 hover:scale-110 active:scale-95 z-50 flex items-center justify-center ${isZoomOpen ? 'bg-blue-600 border-blue-400 text-white' : `${theme.cardBg} ${theme.border} ${theme.textPrimary}`}`}
+                className={`fixed bottom-[112px] right-8 p-4 rounded-full shadow-2xl border backdrop-blur-md transition-all duration-300 hover:scale-110 active:scale-95 z-50 flex items-center justify-center ${isZoomOpen ? 'bg-blue-600 border-blue-400 text-white' : `${theme.cardBg} ${theme.border} ${theme.textPrimary}`}`}
                 title="Zoom"
             >
                 <svg className="w-6 h-6 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1497,7 +1497,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 <>
                     {/* Backdrop to close on outside click */}
                     <div className="fixed inset-0 z-40" onClick={() => setIsZoomOpen(false)} />
-                    <div data-no-pan className={`fixed bottom-[184px] right-8 z-50 flex flex-col items-center gap-2 p-3 rounded-2xl shadow-2xl border backdrop-blur-md ${theme.cardBg} ${theme.border}`}>
+                    <div data-no-pan className={`fixed bottom-[192px] right-8 z-50 flex flex-col items-center gap-2 p-3 rounded-2xl shadow-2xl border backdrop-blur-md ${theme.cardBg} ${theme.border}`}>
                         <button
                             onClick={() => applyZoom(zoom + 0.1)}
                             className={`w-8 h-8 rounded-full flex items-center justify-center text-lg font-bold ${theme.textPrimary} hover:bg-white/20 active:scale-90 transition-all`}
