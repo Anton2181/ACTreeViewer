@@ -56,7 +56,7 @@ function App() {
       return houseMatch && claimMatch;
     }));
 
-    // 2. Add parents and spouses of direct matches
+    // 2. Add immediate family around direct matches
     const finalSet = new Set(directMatches);
 
     // Quick lookup maps
@@ -77,8 +77,21 @@ function App() {
         finalSet.add(nameToChar.get(char.Mother));
       }
 
+      // Add Children
+      data.forEach(candidate => {
+        const isChildById =
+          (candidate.FatherId && candidate.FatherId.toString() === char.id.toString()) ||
+          (candidate.MotherId && candidate.MotherId.toString() === char.id.toString());
+        const isChildByName =
+          (!!char['First Name'] && candidate.Father === char['First Name']) ||
+          (!!char['First Name'] && candidate.Mother === char['First Name']);
+
+        if (isChildById || isChildByName) {
+          finalSet.add(candidate);
+        }
+      });
+
       // Add Spouses (anyone who lists this char as a partner, or vice versa)
-      // Check if this char lists partners
       if (char.Partners) {
         const partnerNames = char.Partners.split(',').map(s => s.trim());
         partnerNames.forEach(pName => {
