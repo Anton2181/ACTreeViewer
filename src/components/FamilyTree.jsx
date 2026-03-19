@@ -31,6 +31,13 @@ const average = (values, fallback = 0) => {
 
 const normalizeHouse = (house) => (house || '').trim();
 
+const getCharacterDisplayName = (char) => {
+    if (!char) return '';
+    const firstName = (char['First Name'] || '').trim();
+    const house = normalizeHouse(char.House);
+    return [firstName, house].filter(Boolean).join(' ').trim();
+};
+
 const getDominantHouse = (chars) => {
     const houseCounts = new Map();
 
@@ -789,6 +796,21 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         }
     }, [data]);
 
+    const charDirectory = useMemo(() => {
+        const source = allData?.length ? allData : data;
+        return new Map(source.map((char) => [char.id.toString(), char]));
+    }, [allData, data]);
+
+    const getParentLabel = (char, parentType) => {
+        const nameField = parentType === 'father' ? 'Father' : 'Mother';
+        const idField = parentType === 'father' ? 'FatherId' : 'MotherId';
+
+        if (char[nameField]) return char[nameField];
+        if (!char[idField]) return '';
+
+        return getCharacterDisplayName(charDirectory.get(char[idField].toString()));
+    };
+
     if (!root) {
         return <div className="text-gray-400 p-8">No valid tree data found.</div>;
     }
@@ -1186,6 +1208,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
                                 const sourceX = getParentMidpointGlobal(parentGroupNode, char) + offsetX;
                                 const targetX = getCharXGlobal(node.id, char.id.toString()) + offsetX;
+                                const sourceY = parentGroupNode.y + 60 + offsetY;
+                                const targetY = node.y - 60 + offsetY;
+                                const stem = Math.min(24, Math.max(12, Math.abs(targetY - sourceY) / 4));
+                                const midY = (sourceY + targetY) / 2;
 
                                 return (
                                     <path
@@ -1193,10 +1219,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                         className={`${theme.link} fill-none transition-all duration-300`}
                                         strokeWidth={2.5}
                                         d={`
-                      M ${sourceX},${parentGroupNode.y + 65 + offsetY}
-                      C ${sourceX},${(parentGroupNode.y + node.y) / 2 + offsetY}
-                        ${targetX},${(parentGroupNode.y + node.y) / 2 + offsetY}
-                        ${targetX},${node.y - 65 + offsetY}
+                      M ${sourceX},${sourceY}
+                      L ${sourceX},${sourceY + stem}
+                      C ${sourceX},${midY}
+                        ${targetX},${midY}
+                        ${targetX},${targetY - stem}
+                      L ${targetX},${targetY}
                     `}
                                     />
                                 );
@@ -1229,6 +1257,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                 {chars.map(data => {
                                     const charXLocal = getCharXLocal(node, data.id.toString());
                                     const isHighlighted = highlightedCharId === data.id.toString();
+                                    const fatherLabel = getParentLabel(data, 'father');
+                                    const motherLabel = getParentLabel(data, 'mother');
                                     const sexColor = data['Sex']?.toLowerCase().startsWith('f') ? '#fb7185' :
                                         data['Sex']?.toLowerCase().startsWith('m') ? '#60a5fa' :
                                             '#9ca3af';
@@ -1332,21 +1362,21 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                             </text>
 
                                             {/* Father Info */}
-                                            {data['Father'] && (
+                                            {fatherLabel && (
                                                 <>
                                                     <text x={-20} y={90} fill="#3b82f6" fontSize={9} textAnchor="end" fontWeight="500" opacity={0.8}>F:</text>
                                                     <text x={-15} y={90} fill={textPrimary} fontSize={9} fontWeight="bold" textAnchor="start">
-                                                        {data['Father'].length > 18 ? data['Father'].substring(0, 15) + '...' : data['Father']}
+                                                        {fatherLabel.length > 18 ? fatherLabel.substring(0, 15) + '...' : fatherLabel}
                                                     </text>
                                                 </>
                                             )}
 
                                             {/* Mother Info */}
-                                            {data['Mother'] && (
+                                            {motherLabel && (
                                                 <>
                                                     <text x={-20} y={105} fill="#e11d48" fontSize={9} textAnchor="end" fontWeight="500" opacity={0.8}>M:</text>
                                                     <text x={-15} y={105} fill={textPrimary} fontSize={9} fontWeight="bold" textAnchor="start">
-                                                        {data['Mother'].length > 18 ? data['Mother'].substring(0, 15) + '...' : data['Mother']}
+                                                        {motherLabel.length > 18 ? motherLabel.substring(0, 15) + '...' : motherLabel}
                                                     </text>
                                                 </>
                                             )}
