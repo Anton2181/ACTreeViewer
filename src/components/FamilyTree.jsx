@@ -629,7 +629,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
     const { root, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = useMemo(() => {
         if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
-        const relationshipSource = allData?.length ? allData : data;
         const byId = {};
         data.forEach(char => {
             byId[char.id.toString()] = char;
@@ -639,28 +638,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const charToGroupMap = {};
         const charGroupLists = {};
         const parentPairToGroupMap = {};
-        const parentPairMemberships = new Map();
-
-        relationshipSource.forEach(char => {
-            if (!char.FatherId || !char.MotherId) return;
-            const pairKey = getParentPairKey(char.FatherId, char.MotherId);
-
-            [char.FatherId, char.MotherId]
-                .filter(Boolean)
-                .forEach(parentId => {
-                    const parentKey = parentId.toString();
-                    if (!parentPairMemberships.has(parentKey)) {
-                        parentPairMemberships.set(parentKey, new Set());
-                    }
-                    parentPairMemberships.get(parentKey).add(pairKey);
-                });
-        });
-
-        const polygamousParentIds = new Set(
-            [...parentPairMemberships.entries()]
-                .filter(([, pairKeys]) => pairKeys.size > 1)
-                .map(([parentId]) => parentId)
-        );
 
         const addNodeForChars = (groupChars, explicitId) => {
             if (!groupChars.length) return null;
@@ -712,15 +689,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             return d3Node;
         };
 
-        // 1. Create explicit parent-pair nodes only for complete known-parent pairings.
+        // 1. Create explicit parent-pair nodes for every complete known-parent pairing.
         data.forEach(char => {
             if (!char.FatherId || !char.MotherId) return;
-            if (
-                (char.FatherId && polygamousParentIds.has(char.FatherId.toString()))
-                || (char.MotherId && polygamousParentIds.has(char.MotherId.toString()))
-            ) {
-                return;
-            }
 
             const pairKey = getParentPairKey(char.FatherId, char.MotherId);
             if (parentPairToGroupMap[pairKey]) return;
@@ -911,22 +882,25 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
     const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroup, charToGroup, charGroupLists);
 
-    const getParentMidpointGlobal = (parentGroupNode, childChar) => {
-        if (parentGroupNode.id === 'WORLD_ROOT') return parentGroupNode.x;
-        const fId = childChar.FatherId;
-        const mId = childChar.MotherId;
-        let xSum = 0;
-        let count = 0;
-        if (fId) {
+    const getParentAnchorGlobals = (parentGroupNode, childChar) => {
+        if (parentGroupNode.id === 'WORLD_ROOT') return [parentGroupNode.x];
+
+        const anchors = [];
+        const fId = childChar.FatherId?.toString();
+        const mId = childChar.MotherId?.toString();
+
+        if (fId && parentGroupNode.data.chars.some(parent => parent.id.toString() === fId)) {
             const x = getCharXGlobal(parentGroupNode.id, fId);
-            if (x !== undefined && !isNaN(x)) { xSum += x; count++; }
+            if (x !== undefined && !isNaN(x)) anchors.push(x);
         }
-        if (mId) {
+
+        if (mId && parentGroupNode.data.chars.some(parent => parent.id.toString() === mId)) {
             const x = getCharXGlobal(parentGroupNode.id, mId);
-            if (x !== undefined && !isNaN(x)) { xSum += x; count++; }
+            if (x !== undefined && !isNaN(x)) anchors.push(x);
         }
-        if (count === 0) return parentGroupNode.x;
-        return xSum / count;
+
+        if (!anchors.length) return [parentGroupNode.x];
+        return anchors;
     };
 
     const containerRef = useRef(null);
@@ -1279,23 +1253,25 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                             const parentGroupIds = resolveParentGroupIds(char);
                             if (!parentGroupIds.length) return [];
 
-                            return parentGroupIds.map((parentGroupId) => {
+                            return parentGroupIds.flatMap((parentGroupId) => {
                                 const parentGroupNode = idToNode[parentGroupId];
-                                if (!parentGroupNode || parentGroupNode.id === 'WORLD_ROOT') return null;
+                                if (!parentGroupNode || parentGroupNode.id === 'WORLD_ROOT') return [];
 
-                                const sourceX = getParentMidpointGlobal(parentGroupNode, char) + offsetX;
                                 const targetX = getCharXGlobal(node.id, char.id.toString()) + offsetX;
                                 const sourceY = parentGroupNode.y + 60 + offsetY;
                                 const targetY = node.y - 60 + offsetY;
                                 const stem = Math.min(24, Math.max(12, Math.abs(targetY - sourceY) / 4));
                                 const midY = (sourceY + targetY) / 2;
 
-                                return (
-                                    <path
-                                        key={`bio-link-${parentGroupId}-${node.id}-${char.id}`}
-                                        className={`${theme.link} fill-none transition-all duration-300`}
-                                        strokeWidth={2.5}
-                                        d={`
+                                return getParentAnchorGlobals(parentGroupNode, char).map((parentAnchorX, anchorIndex) => {
+                                    const sourceX = parentAnchorX + offsetX;
+
+                                    return (
+                                        <path
+                                            key={`bio-link-${parentGroupId}-${node.id}-${char.id}-${anchorIndex}`}
+                                            className={`${theme.link} fill-none transition-all duration-300`}
+                                            strokeWidth={2.5}
+                                            d={`
                       M ${sourceX},${sourceY}
                       L ${sourceX},${sourceY + stem}
                       C ${sourceX},${midY}
@@ -1303,8 +1279,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                         ${targetX},${targetY - stem}
                       L ${targetX},${targetY}
                     `}
-                                    />
-                                );
+                                        />
+                                    );
+                                });
                             }).filter(Boolean);
                         });
                     })}
