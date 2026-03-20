@@ -368,9 +368,29 @@ const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'pare
         depthSubgroupMap.set(subgroupKey, subgroupEntry);
     });
 
+    // Pre-calculate biological child mapping for ALL nodes
+    const bioChildrenMap = new Map();
+    nodes.forEach(childNode => {
+        childNode.data.chars.forEach(char => {
+            getParentGroupIds(char).forEach(parentId => {
+                if (!parentId || parentId === childNode.id || !nodeMap[parentId]) return;
+                if (!bioChildrenMap.has(parentId)) bioChildrenMap.set(parentId, []);
+                bioChildrenMap.get(parentId).push(childNode.id);
+            });
+        });
+    });
+
     const descendantAnchor = new Map();
     [...nodes].reverse().forEach(node => {
-        const childAnchors = (node.children || []).map(child => descendantAnchor.get(child.id) ?? child.x);
+        const hierarchicalChildren = (node.children || []).map(child => child.id);
+        const bioChildrenIds = bioChildrenMap.get(node.id) || [];
+        const allChildrenIds = [...new Set([...hierarchicalChildren, ...bioChildrenIds])];
+        
+        const childAnchors = allChildrenIds
+            .map(id => nodeMap[id])
+            .filter(Boolean)
+            .map(child => descendantAnchor.get(child.id) ?? child.x);
+            
         descendantAnchor.set(node.id, average(childAnchors, node.x));
     });
 
@@ -404,9 +424,10 @@ const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'pare
         const childAnchor = descendantAnchor.get(node.id) ?? node.x;
         const relatedAnchors = [...parentAnchors, childAnchor].filter(value => Number.isFinite(value));
 
+        // Emphasis weights: child weights are boosted to ensure relationships pull families together
         const weights = emphasis === 'children'
-            ? { parent: 0.18, cluster: 0.17, tree: 0.35, subgroup: 0.1, child: 0.2 }
-            : { parent: 0.25, cluster: 0.15, tree: 0.4, subgroup: 0.15, child: 0.05 };
+            ? { parent: 0.15, cluster: 0.15, tree: 0.3, subgroup: 0.1, child: 0.3 }
+            : { parent: 0.3, cluster: 0.1, tree: 0.4, subgroup: 0.1, child: 0.1 };
 
         const score = (
             parentAnchor * weights.parent
@@ -603,6 +624,7 @@ const compareNodeOrder = (a, b, metrics, siblingRanks) => {
     const birthDelta = getBirthYear(a) - getBirthYear(b);
     if (birthDelta !== 0) return birthDelta;
 
+    // Use name as absolute fallback only if all physical/structural proxies are tied
     return getStableNodeOrder(a) - getStableNodeOrder(b);
 };
 
