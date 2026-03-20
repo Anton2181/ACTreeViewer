@@ -470,8 +470,22 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'tree' && !loading && !error && filteredData.length > 0 && (
-          <FamilyTree data={filteredData} allData={data} onFilterHouse={toggleHouse} recenterTrigger={recenterTrigger} />
+        {!loading && !error && (
+          <div className={`absolute inset-0 transition-opacity duration-200 ${activeTab === 'dynasties' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+            <DynastyGraph
+              data={data}
+              selectedDynasties={selectedDynasties}
+              onToggleDynasty={toggleDynasty}
+              onClearSelectedDynasties={() => setSelectedDynasties(new Set())}
+              hiddenDynasties={hiddenDynasties}
+            />
+          </div>
+        )}
+
+        {!loading && !error && filteredData.length > 0 && (
+          <div className={`absolute inset-0 transition-opacity duration-200 ${activeTab === 'tree' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+            <FamilyTree data={filteredData} allData={data} onFilterHouse={toggleHouse} recenterTrigger={recenterTrigger} />
+          </div>
         )}
 
         {activeTab === 'tree' && !loading && !error && filteredData.length === 0 && (
@@ -479,16 +493,6 @@ function App() {
             <Filter size={48} className="mb-4 opacity-20" />
             <p>No characters match the selected filters.</p>
           </div>
-        )}
-
-        {activeTab === 'dynasties' && !loading && !error && (
-          <DynastyGraph
-            data={data}
-            selectedDynasties={selectedDynasties}
-            onToggleDynasty={toggleDynasty}
-            onClearSelectedDynasties={() => setSelectedDynasties(new Set())}
-            hiddenDynasties={hiddenDynasties}
-          />
         )}
       </main>
     </div>

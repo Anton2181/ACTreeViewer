@@ -8,6 +8,8 @@ const NODE_WIDTH = 132;
 const NODE_HEIGHT = 132;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 2.1;
+const REPULSION_RADIUS = 220;
+const REPULSION_RADIUS_SQUARED = REPULSION_RADIUS ** 2;
 const EDGE_COLORS = {
   marriage: 'rgba(180, 83, 9, 0.58)',
   lineage: 'rgba(30, 64, 175, 0.35)',
@@ -38,6 +40,7 @@ const DynastyGraph = ({
   const [renderedNodes, setRenderedNodes] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [showInstructions, setShowInstructions] = useState(true);
 
   const graph = useMemo(() => buildDynastyGraph(data), [data]);
@@ -83,8 +86,8 @@ const DynastyGraph = ({
   }, [graph, hiddenKeys, selectedKeys]);
 
   const worldSize = useMemo(() => ({
-    width: Math.max(2400, viewportSize.width * 4),
-    height: Math.max(2400, viewportSize.height * 4)
+    width: Math.max(4800, viewportSize.width * 8),
+    height: Math.max(4800, viewportSize.height * 8)
   }), [viewportSize.height, viewportSize.width]);
 
   const snapshotNodes = useCallback((nodes) => nodes.map((node) => ({
@@ -199,7 +202,9 @@ const DynastyGraph = ({
           }
 
           const distance = Math.sqrt(distanceSquared);
-          const repulsion = 3500 / distanceSquared;
+          if (distanceSquared > REPULSION_RADIUS_SQUARED) continue;
+          const radiusFalloff = 1 - distance / REPULSION_RADIUS;
+          const repulsion = (1600 / distanceSquared) * Math.max(radiusFalloff, 0);
           const forceX = (dx / distance) * repulsion;
           const forceY = (dy / distance) * repulsion;
 
@@ -378,6 +383,7 @@ const DynastyGraph = ({
     onToggleDynasty(normalizeDynastyName(dynastyName));
     setSearchQuery('');
     setSearchOpen(false);
+    setIsSearchVisible(false);
   };
 
   const handleSearchSubmit = (event) => {
@@ -492,54 +498,79 @@ const DynastyGraph = ({
       </div>
 
       <div data-no-pan className="absolute left-4 top-24 z-10 w-[min(30rem,calc(100%-2rem))] rounded-2xl border border-white/60 bg-white/88 p-4 shadow-xl backdrop-blur-md">
-        <div className="mb-3 flex items-center justify-between gap-4">
-          <div>
-            <h2 className={`text-lg font-semibold ${theme.textPrimary}`}>Dynastic connections</h2>
-          </div>
-          {selectedDynasties.size > 0 && (
+        <div className="flex items-center justify-between gap-4">
+          <h2 className={`text-lg font-semibold ${theme.textPrimary}`}>Dynastic connections</h2>
+          <div className="flex items-center gap-2">
             <button
               type="button"
               data-no-pan
-              onClick={onClearSelectedDynasties}
-              className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
+              onClick={() => {
+                setIsSearchVisible((value) => !value);
+                setSearchOpen((value) => !isSearchVisible || value);
+              }}
+              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${isSearchVisible ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white/80 text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
             >
-              Clear focus
+              <span className="flex items-center gap-2"><Search className="h-4 w-4" /> Search</span>
             </button>
-          )}
+            {selectedDynasties.size > 0 && (
+              <button
+                type="button"
+                data-no-pan
+                onClick={onClearSelectedDynasties}
+                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
+              >
+                Clear focus
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <form onSubmit={handleSearchSubmit} className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              data-no-pan
-              value={searchQuery}
-              onChange={(event) => {
-                setSearchQuery(event.target.value);
-                setSearchOpen(true);
-              }}
-              onFocus={() => setSearchOpen(true)}
-              placeholder="Search dynasty name…"
-              className="w-full rounded-xl border border-slate-300 bg-white/90 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
-            />
-            {searchOpen && searchResults.length > 0 && (
-              <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-                {searchResults.map((result) => (
-                  <button
-                    key={result}
-                    type="button"
-                    data-no-pan
-                    onClick={() => handleSearchSelect(result)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
-                  >
-                    <span>{result}</span>
-                    {selectedKeys.has(getDynastyKey(result)) && <span className="text-xs font-semibold text-blue-700">Focused</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </form>
+        <div className={`mt-3 flex items-center gap-2 ${isSearchVisible ? 'justify-between' : 'justify-end'}`}>
+          {isSearchVisible && (
+            <form onSubmit={handleSearchSubmit} className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                data-no-pan
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setSearchOpen(true);
+                }}
+                onFocus={() => setSearchOpen(true)}
+                placeholder="Search dynasty name…"
+                className="w-full rounded-xl border border-slate-300 bg-white/90 py-2.5 pl-10 pr-10 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+              />
+              <button
+                type="button"
+                data-no-pan
+                onClick={() => {
+                  setIsSearchVisible(false);
+                  setSearchOpen(false);
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Close dynasty search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              {searchOpen && searchResults.length > 0 && (
+                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                  {searchResults.map((result) => (
+                    <button
+                      key={result}
+                      type="button"
+                      data-no-pan
+                      onClick={() => handleSearchSelect(result)}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
+                    >
+                      <span>{result}</span>
+                      {selectedKeys.has(getDynastyKey(result)) && <span className="text-xs font-semibold text-blue-700">Focused</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </form>
+          )}
 
           <div data-no-pan className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 p-1">
             <button
