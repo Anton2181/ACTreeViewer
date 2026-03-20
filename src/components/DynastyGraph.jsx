@@ -106,6 +106,24 @@ const DynastyGraph = ({
       .slice(0, 8);
   }, [graphCollections.allVisibleDynasties, searchQuery]);
 
+  const renderedNodeMap = useMemo(() => new Map(renderedNodes.map((node) => [node.id, node.position])), [renderedNodes]);
+
+  const visibleEdgePaths = useMemo(() => graphCollections.edges.map((edge) => {
+    const source = renderedNodeMap.get(edge.source);
+    const target = renderedNodeMap.get(edge.target);
+    if (!source || !target) return null;
+
+    const curveOffset = Math.min(90, 18 * edge.weight);
+    const relationKey = edge.relationKinds.length > 1 ? 'mixed' : edge.relationKinds[0];
+
+    return {
+      id: edge.id,
+      d: `M ${source.x},${source.y} C ${source.x},${source.y + curveOffset} ${target.x},${target.y - curveOffset} ${target.x},${target.y}`,
+      stroke: EDGE_COLORS[relationKey] || EDGE_COLORS.lineage,
+      width: 2.2 + Math.min(edge.weight * 0.75, 6)
+    };
+  }).filter(Boolean), [graphCollections.edges, renderedNodeMap]);
+
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return undefined;
@@ -435,7 +453,22 @@ const DynastyGraph = ({
               transform: `scale(${zoom})`
             }}
           >
-            <canvas ref={canvasRef} className="absolute inset-0" />
+            <canvas ref={canvasRef} className="absolute inset-0 opacity-0" />
+            <svg className="pointer-events-none absolute inset-0 z-[1] overflow-visible" width={worldSize.width} height={worldSize.height} viewBox={`0 0 ${worldSize.width} ${worldSize.height}`}>
+              {visibleEdgePaths.map((edge) => (
+                <path
+                  key={edge.id}
+                  d={edge.d}
+                  fill="none"
+                  stroke={edge.stroke}
+                  strokeWidth={edge.width}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={0.98}
+                  filter="drop-shadow(0 0 6px rgba(15, 23, 42, 0.22))"
+                />
+              ))}
+            </svg>
 
             {renderedNodes.map((node) => {
               const isSelected = selectedKeys.has(node.id);
