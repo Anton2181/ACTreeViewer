@@ -590,7 +590,6 @@ const DynastyGraph = ({
           };
         }}
         onWheel={(event) => {
-          if (!event.ctrlKey && !event.metaKey) return;
           event.preventDefault();
           const factor = event.deltaY > 0 ? 1 / 1.08 : 1.08;
           adjustZoom(zoom * factor, { x: event.clientX - event.currentTarget.getBoundingClientRect().left, y: event.clientY - event.currentTarget.getBoundingClientRect().top });
