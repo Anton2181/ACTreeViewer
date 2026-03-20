@@ -534,7 +534,7 @@ const DynastyGraph = ({
     };
   }, [graphCollections.nodes, snapshotNodes, worldSize.height, worldSize.width, zoom]);
 
-  const adjustZoom = (zoomUpdate, pivot = null) => {
+  const adjustZoom = useCallback((zoomUpdate, pivot = null) => {
     const scrollElement = scrollRef.current;
     if (!scrollElement) {
       setZoom(prev => clamp(typeof zoomUpdate === 'function' ? zoomUpdate(prev) : zoomUpdate, MIN_ZOOM, MAX_ZOOM));
@@ -556,7 +556,7 @@ const DynastyGraph = ({
       zoomPivotRef.current = { worldX, worldY, pivotX, pivotY };
       return clampedZoom;
     });
-  };
+  }, []);
 
   React.useLayoutEffect(() => {
     if (zoomPivotRef.current) {
@@ -618,7 +618,7 @@ const DynastyGraph = ({
             startTop: scrollElement.scrollTop
           };
         }}
-        className="absolute inset-0 overflow-auto cursor-grab touch-none"
+        className="absolute inset-0 overflow-hidden cursor-grab touch-none"
       >
         <div
           className="relative"

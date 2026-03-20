@@ -1444,7 +1444,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             onPointerLeave={onPointerUp}
             onPointerCancel={onPointerUp}
             onScroll={handleScroll}
-            className={`w-full h-full overflow-auto ${theme.bg} text-black absolute inset-0 transition-colors duration-500 cursor-grab touch-none`}
+            className={`w-full h-full overflow-hidden ${theme.bg} text-black absolute inset-0 transition-colors duration-500 cursor-grab touch-none`}
         >
             <svg width={CANVAS_WIDTH * zoom} height={CANVAS_HEIGHT * zoom} className="mx-auto border-none outline-none overflow-hidden">
                 <g style={{ transform: `scale(${zoom})`, transformOrigin: '0 0' }}>

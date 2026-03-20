@@ -25,6 +25,7 @@ function App() {
   const [error, setError] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('tree');
+  const [hasVisitedDynasties, setHasVisitedDynasties] = useState(false);
 
   const [selectedHouses, setSelectedHouses] = useState(new Set());
   const [selectedClaims, setSelectedClaims] = useState(new Set());
@@ -48,6 +49,12 @@ function App() {
 
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'dynasties') {
+      setHasVisitedDynasties(true);
+    }
+  }, [activeTab]);
 
   const houses = useMemo(() => {
     const all = new Set(data.map((entry) => entry.House).filter(Boolean));
@@ -470,7 +477,7 @@ function App() {
           </div>
         )}
 
-        {!loading && !error && (
+        {!loading && !error && hasVisitedDynasties && (
           <div className={`absolute inset-0 transition-opacity duration-200 ${activeTab === 'dynasties' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
             <DynastyGraph
               data={data}
