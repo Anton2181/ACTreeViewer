@@ -638,6 +638,7 @@ const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partner
     const nodes = rootHierarchy.descendants();
     const nodeMap = new Map(nodes.map((node) => [node.id, node]));
     const rowMap = new Map();
+    const rowMetadata = new Map();
     const biologicalChildrenByNode = new Map();
 
     nodes.forEach((node) => {
@@ -653,6 +654,15 @@ const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partner
                 }
                 biologicalChildrenByNode.get(parentGroupId).add(node.id);
             });
+        });
+    });
+
+    [...rowMap.entries()].forEach(([depth, rowNodes]) => {
+        const orderedNodes = [...rowNodes].sort((a, b) => a.x - b.x);
+        rowMetadata.set(depth, {
+            orderedNodeIds: orderedNodes.map((node) => node.id),
+            baseXByNodeId: new Map(orderedNodes.map((node) => [node.id, node.x])),
+            baseCenter: average(orderedNodes.map((node) => node.x), 0)
         });
     });
 
@@ -679,11 +689,11 @@ const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partner
                 .map((partnerId) => nodeMap.get(partnerId)?.x)
                 .filter(Number.isFinite);
 
-            addAnchor(node.x, 0.18);
-            addAnchor(node.parent?.x, 0.15);
-            addAnchor(average(hierarchyChildXs, NaN), hierarchyChildXs.length ? 0.12 : 0);
-            addAnchor(average(biologicalChildXs, NaN), biologicalChildXs.length ? 0.38 : 0);
-            addAnchor(average(partnerXs, NaN), partnerXs.length ? 0.27 : 0);
+            addAnchor(node.x, 0.35);
+            addAnchor(node.parent?.x, 0.18);
+            addAnchor(average(hierarchyChildXs, NaN), hierarchyChildXs.length ? 0.1 : 0);
+            addAnchor(average(biologicalChildXs, NaN), biologicalChildXs.length ? 0.24 : 0);
+            addAnchor(average(partnerXs, NaN), partnerXs.length ? 0.13 : 0);
 
             if (!anchors.length) {
                 idealXByNode.set(node.id, node.x);
@@ -697,36 +707,42 @@ const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partner
 
         [...rowMap.entries()]
             .sort((a, b) => a[0] - b[0])
-            .forEach(([, rowNodes]) => {
-                const originalXs = rowNodes.map((node) => node.x);
-                const orderedNodes = [...rowNodes].sort((a, b) => {
-                    const idealDelta = (idealXByNode.get(a.id) ?? a.x) - (idealXByNode.get(b.id) ?? b.x);
-                    if (Math.abs(idealDelta) > 1e-6) return idealDelta;
-                    return a.x - b.x;
-                });
+            .forEach(([depth]) => {
+                const metadata = rowMetadata.get(depth);
+                if (!metadata) return;
+
+                const orderedNodes = metadata.orderedNodeIds
+                    .map((nodeId) => nodeMap.get(nodeId))
+                    .filter(Boolean);
 
                 orderedNodes.forEach((node, index) => {
-                    const halfWidth = getRenderedNodeHalfWidth(node);
+                    const baseX = metadata.baseXByNodeId.get(node.id) ?? node.x;
+                    const maxDrift = Math.max(160, getRenderedNodeWidth(node) * 0.9);
                     const idealX = idealXByNode.get(node.id) ?? node.x;
+                    const boundedIdealX = Math.min(baseX + maxDrift, Math.max(baseX - maxDrift, idealX));
+                    const halfWidth = getRenderedNodeHalfWidth(node);
                     if (index === 0) {
-                        node.x = idealX;
+                        node.x = boundedIdealX;
                         return;
                     }
 
                     const previousNode = orderedNodes[index - 1];
                     const minX = previousNode.x + getRenderedNodeHalfWidth(previousNode) + halfWidth + gap;
-                    node.x = Math.max(idealX, minX);
+                    node.x = Math.max(boundedIdealX, minX);
                 });
 
                 for (let index = orderedNodes.length - 2; index >= 0; index--) {
                     const node = orderedNodes[index];
                     const nextNode = orderedNodes[index + 1];
                     const maxX = nextNode.x - getRenderedNodeHalfWidth(nextNode) - getRenderedNodeHalfWidth(node) - gap;
+                    const baseX = metadata.baseXByNodeId.get(node.id) ?? node.x;
+                    const maxDrift = Math.max(160, getRenderedNodeWidth(node) * 0.9);
                     const idealX = idealXByNode.get(node.id) ?? node.x;
-                    node.x = Math.min(Math.max(node.x, idealX), maxX);
+                    const boundedIdealX = Math.min(baseX + maxDrift, Math.max(baseX - maxDrift, idealX));
+                    node.x = Math.min(Math.max(node.x, boundedIdealX), maxX);
                 }
 
-                const originalCenter = average(originalXs, 0);
+                const originalCenter = metadata.baseCenter;
                 const newCenter = average(orderedNodes.map((node) => node.x), 0);
                 const centerDelta = originalCenter - newCenter;
                 orderedNodes.forEach((node) => {
