@@ -40,6 +40,7 @@ const DynastyGraph = ({
   const dragStateRef = useRef(null);
   const panStateRef = useRef(null);
   const hasAutoCenteredRef = useRef(false);
+  const zoomPivotRef = useRef(null); // { worldX, worldY, pivotX, pivotY }
   const [viewportSize, setViewportSize] = useState({ width: 1200, height: 720 });
   const [zoom, setZoom] = useState(1);
   const [renderVersion, setRenderVersion] = useState(0);
@@ -533,31 +534,41 @@ const DynastyGraph = ({
     };
   }, [graphCollections.nodes, snapshotNodes, worldSize.height, worldSize.width, zoom]);
 
-  const adjustZoom = (nextZoom, pivot = null) => {
+  const adjustZoom = (zoomUpdate, pivot = null) => {
     const scrollElement = scrollRef.current;
     if (!scrollElement) {
-      setZoom(clamp(nextZoom, MIN_ZOOM, MAX_ZOOM));
+      setZoom(prev => clamp(typeof zoomUpdate === 'function' ? zoomUpdate(prev) : zoomUpdate, MIN_ZOOM, MAX_ZOOM));
       return;
     }
-
-    const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
-    const previousZoom = zoom;
-    if (clampedZoom === previousZoom) return;
 
     const rect = scrollElement.getBoundingClientRect();
     const pivotX = pivot?.x ?? rect.width / 2;
     const pivotY = pivot?.y ?? rect.height / 2;
-    const worldX = (scrollElement.scrollLeft + pivotX) / previousZoom;
-    const worldY = (scrollElement.scrollTop + pivotY) / previousZoom;
 
-    setZoom(clampedZoom);
+    setZoom(prevZoom => {
+      const nextZoom = typeof zoomUpdate === 'function' ? zoomUpdate(prevZoom) : zoomUpdate;
+      const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
+      if (clampedZoom === prevZoom) return prevZoom;
 
-    requestAnimationFrame(() => {
-      if (!scrollRef.current) return;
-      scrollRef.current.scrollLeft = worldX * clampedZoom - pivotX;
-      scrollRef.current.scrollTop = worldY * clampedZoom - pivotY;
+      const worldX = (scrollElement.scrollLeft + pivotX) / prevZoom;
+      const worldY = (scrollElement.scrollTop + pivotY) / prevZoom;
+
+      zoomPivotRef.current = { worldX, worldY, pivotX, pivotY };
+      return clampedZoom;
     });
   };
+
+  React.useLayoutEffect(() => {
+    if (zoomPivotRef.current) {
+      const scrollElement = scrollRef.current;
+      if (scrollElement) {
+        const { worldX, worldY, pivotX, pivotY } = zoomPivotRef.current;
+        scrollElement.scrollLeft = worldX * zoom - pivotX;
+        scrollElement.scrollTop = worldY * zoom - pivotY;
+      }
+      zoomPivotRef.current = null;
+    }
+  }, [zoom]);
 
   const handleSearchSelect = (dynastyName) => {
     if (!dynastyName) return;
@@ -592,7 +603,7 @@ const DynastyGraph = ({
         onWheel={(event) => {
           event.preventDefault();
           const factor = event.deltaY > 0 ? 1 / 1.08 : 1.08;
-          adjustZoom(zoom * factor, { x: event.clientX - event.currentTarget.getBoundingClientRect().left, y: event.clientY - event.currentTarget.getBoundingClientRect().top });
+          adjustZoom(z => z * factor, { x: event.clientX - event.currentTarget.getBoundingClientRect().left, y: event.clientY - event.currentTarget.getBoundingClientRect().top });
         }}
         className="absolute inset-0 overflow-auto cursor-grab touch-none"
       >
@@ -709,7 +720,7 @@ const DynastyGraph = ({
               <button
                 type="button"
                 data-no-pan
-                onClick={() => adjustZoom(zoom / 1.12)}
+                onClick={() => adjustZoom(z => z / 1.12)}
                 className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Zoom out"
               >
@@ -719,7 +730,7 @@ const DynastyGraph = ({
               <button
                 type="button"
                 data-no-pan
-                onClick={() => adjustZoom(zoom * 1.12)}
+                onClick={() => adjustZoom(z => z * 1.12)}
                 className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Zoom in"
               >
@@ -794,7 +805,7 @@ const DynastyGraph = ({
                 <button
                   type="button"
                   data-no-pan
-                  onClick={() => adjustZoom(zoom / 1.12)}
+                  onClick={() => adjustZoom(z => z / 1.12)}
                   className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
                   aria-label="Zoom out"
                 >
@@ -804,7 +815,7 @@ const DynastyGraph = ({
                 <button
                   type="button"
                   data-no-pan
-                  onClick={() => adjustZoom(zoom * 1.12)}
+                  onClick={() => adjustZoom(z => z * 1.12)}
                   className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
                   aria-label="Zoom in"
                 >
