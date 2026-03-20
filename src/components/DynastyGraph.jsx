@@ -12,9 +12,14 @@ const REPULSION_RADIUS = 400;
 const REPULSION_RADIUS_SQUARED = REPULSION_RADIUS ** 2;
 const MAX_REPULSION_FORCE = 0.95;
 const EDGE_COLORS = {
-  marriage: 'rgba(180, 83, 9, 0.82)',
-  lineage: 'rgba(30, 64, 175, 0.62)',
-  mixed: 'rgba(109, 40, 217, 0.72)'
+  marriage: [180, 83, 9],
+  lineage: [30, 64, 175],
+  mixed: [109, 40, 217]
+};
+
+const getEdgeStroke = (relationKey, alpha) => {
+  const [r, g, b] = EDGE_COLORS[relationKey] || EDGE_COLORS.lineage;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
 const getSigilUrl = (rawHouse) => `${import.meta.env.BASE_URL}coas/House_${(rawHouse || '').replace(/\s+/g, '_')}.svg`;
@@ -59,30 +64,49 @@ const DynastyGraph = ({
   const graphCollections = useMemo(() => {
     const baseNodes = graph.nodes.filter((node) => !hiddenKeys.has(node.id));
     const nodeMap = new Map(baseNodes.map((node) => [node.id, node]));
-    const neighborKeys = new Set(selectedKeys);
-
     const baseEdges = graph.edges.filter((edge) => nodeMap.has(edge.source) && nodeMap.has(edge.target));
+    const nodeDistances = new Map();
 
     if (selectedKeys.size > 0) {
+      const adjacency = new Map(baseNodes.map((node) => [node.id, new Set()]));
       baseEdges.forEach((edge) => {
-        if (selectedKeys.has(edge.source) || selectedKeys.has(edge.target)) {
-          neighborKeys.add(edge.source);
-          neighborKeys.add(edge.target);
-        }
+        adjacency.get(edge.source)?.add(edge.target);
+        adjacency.get(edge.target)?.add(edge.source);
       });
+
+      const queue = [...selectedKeys].filter((key) => adjacency.has(key));
+      queue.forEach((key) => nodeDistances.set(key, 0));
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        const currentDistance = nodeDistances.get(current) ?? 0;
+        adjacency.get(current)?.forEach((neighbor) => {
+          if (nodeDistances.has(neighbor)) return;
+          nodeDistances.set(neighbor, currentDistance + 1);
+          queue.push(neighbor);
+        });
+      }
     }
 
     const visibleNodes = selectedKeys.size > 0
-      ? baseNodes.filter((node) => neighborKeys.has(node.id))
+      ? baseNodes.filter((node) => nodeDistances.has(node.id))
       : baseNodes;
 
     const visibleNodeMap = new Map(visibleNodes.map((node) => [node.id, node]));
-    const visibleEdges = baseEdges.filter((edge) => visibleNodeMap.has(edge.source) && visibleNodeMap.has(edge.target));
+    const visibleEdges = baseEdges
+      .filter((edge) => visibleNodeMap.has(edge.source) && visibleNodeMap.has(edge.target))
+      .map((edge) => ({
+        ...edge,
+        focusDepth: selectedKeys.size > 0
+          ? Math.max(nodeDistances.get(edge.source) ?? 0, nodeDistances.get(edge.target) ?? 0)
+          : 0
+      }));
 
     return {
       nodes: visibleNodes,
       edges: visibleEdges,
-      allVisibleDynasties: baseNodes.map((node) => node.name)
+      allVisibleDynasties: baseNodes.map((node) => node.name),
+      nodeDistances
     };
   }, [graph, hiddenKeys, selectedKeys]);
 
@@ -115,14 +139,16 @@ const DynastyGraph = ({
 
     const curveOffset = Math.min(90, 18 * edge.weight);
     const relationKey = edge.relationKinds.length > 1 ? 'mixed' : edge.relationKinds[0];
+    const fade = selectedKeys.size > 0 ? Math.max(0.16, 0.6 - edge.focusDepth * 0.09) : 0.38;
+    const widthScale = selectedKeys.size > 0 ? Math.max(0.58, 1 - edge.focusDepth * 0.08) : 0.8;
 
     return {
       id: edge.id,
       d: `M ${source.x},${source.y} C ${source.x},${source.y + curveOffset} ${target.x},${target.y - curveOffset} ${target.x},${target.y}`,
-      stroke: EDGE_COLORS[relationKey] || EDGE_COLORS.lineage,
-      width: 2.2 + Math.min(edge.weight * 0.75, 6)
+      stroke: getEdgeStroke(relationKey, fade),
+      width: (1.8 + Math.min(edge.weight * 0.6, 4.5)) * widthScale
     };
-  }).filter(Boolean), [graphCollections.edges, renderedNodeMap]);
+  }).filter(Boolean), [graphCollections.edges, renderedNodeMap, selectedKeys.size]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -454,7 +480,7 @@ const DynastyGraph = ({
             }}
           >
             <canvas ref={canvasRef} className="absolute inset-0 opacity-0" />
-            <svg className="pointer-events-none absolute inset-0 z-[1] overflow-visible" width={worldSize.width} height={worldSize.height} viewBox={`0 0 ${worldSize.width} ${worldSize.height}`}>
+            <svg className="pointer-events-none absolute inset-0 z-0 overflow-visible" width={worldSize.width} height={worldSize.height} viewBox={`0 0 ${worldSize.width} ${worldSize.height}`}>
               {visibleEdgePaths.map((edge) => (
                 <path
                   key={edge.id}
@@ -464,8 +490,7 @@ const DynastyGraph = ({
                   strokeWidth={edge.width}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  opacity={0.98}
-                  filter="drop-shadow(0 0 6px rgba(15, 23, 42, 0.22))"
+                  opacity={1}
                 />
               ))}
             </svg>
@@ -498,7 +523,7 @@ const DynastyGraph = ({
                     position.vy = 0;
                   }}
                   onDoubleClick={() => onToggleDynasty(node.name)}
-                  className={`group absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border text-left shadow-lg backdrop-blur-sm transition duration-200 ${isSelected ? 'border-blue-500 shadow-blue-200/80 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300'}`}
+                  className={`group absolute z-10 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border text-left shadow-lg backdrop-blur-sm transition duration-200 ${isSelected ? 'border-blue-500 shadow-blue-200/80 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300'}`}
                   style={{
                     left: `${node.position.x}px`,
                     top: `${node.position.y}px`,
