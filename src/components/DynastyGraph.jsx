@@ -61,10 +61,58 @@ const DynastyGraph = ({
     [selectedDynasties]
   );
 
+  const baseGraphLayout = useMemo(() => {
+    const nodes = graph.nodes.filter((node) => !hiddenKeys.has(node.id));
+    const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+    const edges = graph.edges.filter((edge) => nodeMap.has(edge.source) && nodeMap.has(edge.target));
+    const adjacency = new Map(nodes.map((node) => [node.id, new Set()]));
+
+    edges.forEach((edge) => {
+      adjacency.get(edge.source)?.add(edge.target);
+      adjacency.get(edge.target)?.add(edge.source);
+    });
+
+    const visited = new Set();
+    const components = [];
+    nodes.forEach((node) => {
+      if (visited.has(node.id)) return;
+
+      const queue = [node.id];
+      const componentIds = [];
+      visited.add(node.id);
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        componentIds.push(current);
+        adjacency.get(current)?.forEach((neighbor) => {
+          if (visited.has(neighbor)) return;
+          visited.add(neighbor);
+          queue.push(neighbor);
+        });
+      }
+
+      componentIds.sort((a, b) => {
+        const nodeA = nodeMap.get(a);
+        const nodeB = nodeMap.get(b);
+        return (nodeB?.relations || 0) - (nodeA?.relations || 0) || (nodeB?.members || 0) - (nodeA?.members || 0) || a.localeCompare(b);
+      });
+      components.push(componentIds);
+    });
+
+    components.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+
+    const layoutHints = new Map();
+    components.forEach((componentIds, componentIndex) => {
+      componentIds.forEach((nodeId, localIndex) => {
+        layoutHints.set(nodeId, { componentIndex, localIndex, componentSize: componentIds.length });
+      });
+    });
+
+    return { nodes, edges, components, layoutHints };
+  }, [graph, hiddenKeys]);
+
   const graphCollections = useMemo(() => {
-    const baseNodes = graph.nodes.filter((node) => !hiddenKeys.has(node.id));
-    const nodeMap = new Map(baseNodes.map((node) => [node.id, node]));
-    const baseEdges = graph.edges.filter((edge) => nodeMap.has(edge.source) && nodeMap.has(edge.target));
+    const { nodes: baseNodes, edges: baseEdges } = baseGraphLayout;
     const nodeDistances = new Map();
 
     if (selectedKeys.size > 0) {
@@ -108,7 +156,7 @@ const DynastyGraph = ({
       allVisibleDynasties: baseNodes.map((node) => node.name),
       nodeDistances
     };
-  }, [graph, hiddenKeys, selectedKeys]);
+  }, [baseGraphLayout, selectedKeys]);
 
   const worldSize = useMemo(() => ({
     width: Math.max(4800, viewportSize.width * 8),
@@ -168,37 +216,39 @@ const DynastyGraph = ({
   }, []);
 
   useEffect(() => {
-    const spacing = 240;
-    const rowHeight = 180;
-    const columns = Math.max(1, Math.ceil(Math.sqrt(graphCollections.nodes.length || 1)));
-    const centerX = worldSize.width / 2;
-    const centerY = worldSize.height / 2;
+    const componentCount = Math.max(1, baseGraphLayout.components.length);
+    const regionColumns = Math.max(1, Math.ceil(Math.sqrt(componentCount)));
+    const regionRows = Math.max(1, Math.ceil(componentCount / regionColumns));
+    const regionWidth = worldSize.width / regionColumns;
+    const regionHeight = worldSize.height / regionRows;
 
-    graphCollections.nodes.forEach((node, index) => {
+    baseGraphLayout.nodes.forEach((node) => {
       const existing = layoutRef.current.get(node.id);
       if (existing) return;
 
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      const x = centerX + (column - (columns - 1) / 2) * spacing;
-      const y = centerY + (row - Math.floor((graphCollections.nodes.length / columns) / 2)) * rowHeight;
+      const hint = baseGraphLayout.layoutHints.get(node.id) || { componentIndex: 0, localIndex: 0, componentSize: 1 };
+      const regionColumn = hint.componentIndex % regionColumns;
+      const regionRow = Math.floor(hint.componentIndex / regionColumns);
+      const localColumns = Math.max(1, Math.ceil(Math.sqrt(hint.componentSize)));
+      const localRow = Math.floor(hint.localIndex / localColumns);
+      const localColumn = hint.localIndex % localColumns;
+      const localSpacingX = Math.min(220, Math.max(120, regionWidth / (localColumns + 1)));
+      const localSpacingY = Math.min(180, Math.max(110, regionHeight / (Math.ceil(hint.componentSize / localColumns) + 1)));
+      const componentCenterX = regionColumn * regionWidth + regionWidth / 2;
+      const componentCenterY = regionRow * regionHeight + regionHeight / 2;
+      const x = componentCenterX + (localColumn - (localColumns - 1) / 2) * localSpacingX;
+      const y = componentCenterY + (localRow - (Math.ceil(hint.componentSize / localColumns) - 1) / 2) * localSpacingY;
 
       layoutRef.current.set(node.id, {
-        x,
-        y,
+        x: clamp(x, 180, worldSize.width - 180),
+        y: clamp(y, 160, worldSize.height - 160),
         vx: 0,
         vy: 0,
         dragging: false
       });
     });
 
-    [...layoutRef.current.keys()].forEach((key) => {
-      if (!graphCollections.nodes.some((node) => node.id === key)) {
-        layoutRef.current.delete(key);
-      }
-    });
-
-  }, [graphCollections.nodes, worldSize.height, worldSize.width]);
+  }, [baseGraphLayout, worldSize.height, worldSize.width]);
 
   useEffect(() => {
     if (hasAutoCenteredRef.current) return;
