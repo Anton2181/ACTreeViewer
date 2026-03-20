@@ -606,6 +606,115 @@ const compareNodeOrder = (a, b, metrics, siblingRanks) => {
     return getStableNodeOrder(a) - getStableNodeOrder(b);
 };
 
+const optimizeSiblingSubtreeOrder = (rootHierarchy, getParentGroupIds) => {
+    const nodeLookup = new Map(rootHierarchy.descendants().map(node => [node.id, node]));
+    const descendantCache = new Map();
+
+    const getDescendantIds = (node) => {
+        if (descendantCache.has(node.id)) return descendantCache.get(node.id);
+        const descendantIds = new Set([node.id]);
+        (node.children || []).forEach((child) => {
+            if (child.id === 'WORLD_ROOT') return;
+            getDescendantIds(child).forEach(id => descendantIds.add(id));
+        });
+        descendantCache.set(node.id, descendantIds);
+        return descendantIds;
+    };
+
+    const evaluateOrderCost = (order, weights) => {
+        const positions = new Map(order.map((childIndex, position) => [childIndex, position]));
+        let cost = 0;
+
+        for (let leftIndex = 0; leftIndex < weights.length; leftIndex++) {
+            for (let rightIndex = leftIndex + 1; rightIndex < weights.length; rightIndex++) {
+                const weight = weights[leftIndex][rightIndex] + weights[rightIndex][leftIndex];
+                if (!weight) continue;
+                const slotDistance = Math.abs((positions.get(leftIndex) || 0) - (positions.get(rightIndex) || 0));
+                cost += weight * Math.max(0, slotDistance - 1);
+            }
+        }
+
+        return cost;
+    };
+
+    const permuteOrders = (values) => {
+        if (values.length <= 1) return [values];
+        const permutations = [];
+        values.forEach((value, index) => {
+            const remaining = values.slice(0, index).concat(values.slice(index + 1));
+            permuteOrders(remaining).forEach(permutation => {
+                permutations.push([value, ...permutation]);
+            });
+        });
+        return permutations;
+    };
+
+    rootHierarchy.each((node) => {
+        if (!node.children || node.children.length < 2) return;
+
+        const visibleChildren = node.children.filter(child => child.id !== 'WORLD_ROOT');
+        if (visibleChildren.length < 2) return;
+
+        const ownerByNodeId = new Map();
+        visibleChildren.forEach((child, childIndex) => {
+            getDescendantIds(child).forEach((descendantId) => {
+                ownerByNodeId.set(descendantId, childIndex);
+            });
+        });
+
+        const weights = Array.from({ length: visibleChildren.length }, () => Array(visibleChildren.length).fill(0));
+
+        visibleChildren.forEach((child, childIndex) => {
+            getDescendantIds(child).forEach((descendantId) => {
+                const descendantNode = nodeLookup.get(descendantId);
+                if (!descendantNode) return;
+
+                const linkedGroupIds = new Set();
+                if (descendantNode.data?.placementPartnerGroupId) {
+                    linkedGroupIds.add(descendantNode.data.placementPartnerGroupId);
+                }
+
+                descendantNode.data?.chars?.forEach((char) => {
+                    getParentGroupIds(char).forEach((groupId) => linkedGroupIds.add(groupId));
+                });
+
+                linkedGroupIds.forEach((linkedGroupId) => {
+                    const linkedOwner = ownerByNodeId.get(linkedGroupId);
+                    if (linkedOwner === undefined || linkedOwner === childIndex) return;
+                    weights[childIndex][linkedOwner] += 1;
+                });
+            });
+        });
+
+        const hasConnections = weights.some(row => row.some(weight => weight > 0));
+        if (!hasConnections) return;
+
+        const childIndices = visibleChildren.map((_, index) => index);
+        let bestOrder = childIndices;
+        let bestCost = evaluateOrderCost(bestOrder, weights);
+
+        if (visibleChildren.length <= 7) {
+            permuteOrders(childIndices).forEach((candidateOrder) => {
+                const candidateCost = evaluateOrderCost(candidateOrder, weights);
+                if (candidateCost < bestCost) {
+                    bestCost = candidateCost;
+                    bestOrder = candidateOrder;
+                }
+            });
+        } else {
+            bestOrder = [...childIndices].sort((leftIndex, rightIndex) => {
+                const leftPull = weights[leftIndex].reduce((sum, weight, linkedIndex) => sum + weight * linkedIndex, 0);
+                const rightPull = weights[rightIndex].reduce((sum, weight, linkedIndex) => sum + weight * linkedIndex, 0);
+                return leftPull - rightPull;
+            });
+        }
+
+        const orderedVisibleChildren = bestOrder.map(index => visibleChildren[index]);
+        const hiddenChildren = node.children.filter(child => child.id === 'WORLD_ROOT');
+        node.children = [...orderedVisibleChildren, ...hiddenChildren];
+    });
+};
+
 const alignNodeLevels = (rootHierarchy, getParentGroupIds, levelHeight = 250) => {
     const nodes = rootHierarchy.descendants();
     const nodeMap = new Map(nodes.map((node) => [node.id, node]));
@@ -1009,6 +1118,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 const metrics = buildOrderingMetrics(rootHierarchy, resolveParentGroupIds, emphasis);
                 const siblingRanks = buildSiblingRanks(rootHierarchy, metrics);
                 rootHierarchy.sort((a, b) => compareNodeOrder(a, b, metrics, siblingRanks));
+                optimizeSiblingSubtreeOrder(rootHierarchy, resolveParentGroupIds);
                 assignHorizontalTreePositions(rootHierarchy);
             });
 
