@@ -638,6 +638,28 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const charToGroupMap = {};
         const charGroupLists = {};
         const parentPairToGroupMap = {};
+        const parentPairMemberships = new Map();
+
+        data.forEach(char => {
+            if (!char.FatherId || !char.MotherId) return;
+            const pairKey = getParentPairKey(char.FatherId, char.MotherId);
+
+            [char.FatherId, char.MotherId]
+                .filter(Boolean)
+                .forEach(parentId => {
+                    const parentKey = parentId.toString();
+                    if (!parentPairMemberships.has(parentKey)) {
+                        parentPairMemberships.set(parentKey, new Set());
+                    }
+                    parentPairMemberships.get(parentKey).add(pairKey);
+                });
+        });
+
+        const polygamousParentIds = new Set(
+            [...parentPairMemberships.entries()]
+                .filter(([, pairKeys]) => pairKeys.size > 1)
+                .map(([parentId]) => parentId)
+        );
 
         const addNodeForChars = (groupChars, explicitId) => {
             if (!groupChars.length) return null;
@@ -673,7 +695,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 familyTree: '',
                 blockHierarchyId: '',
                 groupSize: groupChars.length,
-                parentId: null
+                parentId: null,
+                isPolygamousPair: false
             };
 
             d3Node.familyCluster = d3Node.id;
@@ -704,7 +727,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             if (!groupChars.length) return;
 
             const node = addNodeForChars(groupChars, `PAIR:${pairKey}`);
-            if (node) parentPairToGroupMap[pairKey] = node.id;
+            if (node) {
+                node.isPolygamousPair = polygamousParentIds.has(char.FatherId.toString()) || polygamousParentIds.has(char.MotherId.toString());
+                parentPairToGroupMap[pairKey] = node.id;
+            }
         });
 
         // 2. Add solo nodes for people who never appear in a partnership node.
@@ -900,6 +926,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         }
 
         if (!anchors.length) return [parentGroupNode.x];
+
+        const isProperPairNode = parentGroupNode.data?.id?.startsWith('PAIR:') && anchors.length === 2;
+        if (isProperPairNode && !parentGroupNode.data?.isPolygamousPair) {
+            return [(anchors[0] + anchors[1]) / 2];
+        }
+
         return anchors;
     };
 
