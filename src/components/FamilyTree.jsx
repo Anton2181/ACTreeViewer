@@ -666,7 +666,7 @@ const alignNodeLevels = (rootHierarchy, getParentGroupIds, levelHeight = 250) =>
     });
 };
 
-const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partnerGroupIdsByNode = new Map(), gap = 70, iterations = 6) => {
+const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partnerGroupIdsByNode = new Map(), gap = 90, iterations = 6) => {
     const nodes = rootHierarchy.descendants();
     const nodeMap = new Map(nodes.map((node) => [node.id, node]));
     const rowMap = new Map();
@@ -1047,8 +1047,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             });
 
             const treeLayout = tree()
-                .nodeSize([220, 250])
-                .separation((a, b) => (a.data.groupSize + b.data.groupSize) / 2 + 0.2);
+                .nodeSize([260, 250])
+                .separation((a, b) => (a.data.groupSize + b.data.groupSize) / 2 + 0.45);
 
             treeLayout(rootHierarchy);
 
