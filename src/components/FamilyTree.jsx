@@ -66,6 +66,7 @@ const getCategory = (childNode, parentNode) => {
 
     if (hasFather && !hasMother) return -1;
     if (!hasFather && hasMother) return 1;
+    if (Number.isFinite(childNode?.data?.placementCategoryHint)) return childNode.data.placementCategoryHint;
     return 0;
 };
 
@@ -118,6 +119,14 @@ const getMedian = (values, fallback = 0) => {
     if (sorted.length % 2 === 1) return sorted[middle];
     return (sorted[middle - 1] + sorted[middle]) / 2;
 };
+
+const getRenderedNodeWidth = (nodeLike) => {
+    const chars = nodeLike?.data?.chars || nodeLike?.chars || [];
+    if (!chars.length) return 0;
+    return 190 * chars.length + 20 * Math.max(chars.length - 1, 0);
+};
+
+const getRenderedNodeHalfWidth = (nodeLike) => getRenderedNodeWidth(nodeLike) / 2;
 
 const buildRelationshipAdjacency = (nodes, charToGroupMap, resolver) => {
     const adjacency = new Map();
@@ -625,6 +634,108 @@ const alignNodeLevels = (rootHierarchy, getParentGroupIds, levelHeight = 250) =>
     });
 };
 
+const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partnerGroupIdsByNode = new Map(), gap = 70, iterations = 6) => {
+    const nodes = rootHierarchy.descendants();
+    const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+    const rowMap = new Map();
+    const biologicalChildrenByNode = new Map();
+
+    nodes.forEach((node) => {
+        if (node.id === 'WORLD_ROOT') return;
+        if (!rowMap.has(node.depth)) rowMap.set(node.depth, []);
+        rowMap.get(node.depth).push(node);
+
+        node.data.chars.forEach((char) => {
+            getParentGroupIds(char).forEach((parentGroupId) => {
+                if (!parentGroupId || !nodeMap.has(parentGroupId)) return;
+                if (!biologicalChildrenByNode.has(parentGroupId)) {
+                    biologicalChildrenByNode.set(parentGroupId, new Set());
+                }
+                biologicalChildrenByNode.get(parentGroupId).add(node.id);
+            });
+        });
+    });
+
+    for (let iteration = 0; iteration < iterations; iteration++) {
+        const idealXByNode = new Map();
+
+        nodes.forEach((node) => {
+            if (node.id === 'WORLD_ROOT') return;
+
+            const anchors = [];
+            const addAnchor = (value, weight) => {
+                if (!Number.isFinite(value) || !weight) return;
+                anchors.push({ value, weight });
+            };
+
+            const hierarchyChildXs = (node.children || [])
+                .filter((child) => child.id !== 'WORLD_ROOT')
+                .map((child) => child.x)
+                .filter(Number.isFinite);
+            const biologicalChildXs = [...(biologicalChildrenByNode.get(node.id) || [])]
+                .map((childId) => nodeMap.get(childId)?.x)
+                .filter(Number.isFinite);
+            const partnerXs = [...(partnerGroupIdsByNode.get(node.id) || [])]
+                .map((partnerId) => nodeMap.get(partnerId)?.x)
+                .filter(Number.isFinite);
+
+            addAnchor(node.x, 0.18);
+            addAnchor(node.parent?.x, 0.15);
+            addAnchor(average(hierarchyChildXs, NaN), hierarchyChildXs.length ? 0.12 : 0);
+            addAnchor(average(biologicalChildXs, NaN), biologicalChildXs.length ? 0.38 : 0);
+            addAnchor(average(partnerXs, NaN), partnerXs.length ? 0.27 : 0);
+
+            if (!anchors.length) {
+                idealXByNode.set(node.id, node.x);
+                return;
+            }
+
+            const weightedSum = anchors.reduce((sum, anchor) => sum + anchor.value * anchor.weight, 0);
+            const totalWeight = anchors.reduce((sum, anchor) => sum + anchor.weight, 0);
+            idealXByNode.set(node.id, totalWeight ? weightedSum / totalWeight : node.x);
+        });
+
+        [...rowMap.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .forEach(([, rowNodes]) => {
+                const originalXs = rowNodes.map((node) => node.x);
+                const orderedNodes = [...rowNodes].sort((a, b) => {
+                    const idealDelta = (idealXByNode.get(a.id) ?? a.x) - (idealXByNode.get(b.id) ?? b.x);
+                    if (Math.abs(idealDelta) > 1e-6) return idealDelta;
+                    return a.x - b.x;
+                });
+
+                orderedNodes.forEach((node, index) => {
+                    const halfWidth = getRenderedNodeHalfWidth(node);
+                    const idealX = idealXByNode.get(node.id) ?? node.x;
+                    if (index === 0) {
+                        node.x = idealX;
+                        return;
+                    }
+
+                    const previousNode = orderedNodes[index - 1];
+                    const minX = previousNode.x + getRenderedNodeHalfWidth(previousNode) + halfWidth + gap;
+                    node.x = Math.max(idealX, minX);
+                });
+
+                for (let index = orderedNodes.length - 2; index >= 0; index--) {
+                    const node = orderedNodes[index];
+                    const nextNode = orderedNodes[index + 1];
+                    const maxX = nextNode.x - getRenderedNodeHalfWidth(nextNode) - getRenderedNodeHalfWidth(node) - gap;
+                    const idealX = idealXByNode.get(node.id) ?? node.x;
+                    node.x = Math.min(Math.max(node.x, idealX), maxX);
+                }
+
+                const originalCenter = average(originalXs, 0);
+                const newCenter = average(orderedNodes.map((node) => node.x), 0);
+                const centerDelta = originalCenter - newCenter;
+                orderedNodes.forEach((node) => {
+                    node.x += centerDelta;
+                });
+            });
+    }
+};
+
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
     const { root, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = useMemo(() => {
@@ -641,6 +752,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const parentPairToGroupMap = {};
         const parentPairMemberships = new Map();
         const coParentIdsByChar = new Map();
+        const partnerGroupIdsByNode = new Map();
 
         relationshipSource.forEach(char => {
             if (!char.FatherId || !char.MotherId) return;
@@ -709,7 +821,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 blockHierarchyId: '',
                 groupSize: groupChars.length,
                 parentId: null,
-                isPolygamousPair: false
+                isPolygamousPair: false,
+                placementCategoryHint: 0
             };
 
             d3Node.familyCluster = d3Node.id;
@@ -758,6 +871,25 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             addNodeForChars([char], `SOLO:${charId}`);
         });
 
+        d3Nodes.forEach(node => {
+            if (node.id === 'WORLD_ROOT') return;
+
+            const partnerGroupIds = new Set();
+            node.chars.forEach(char => {
+                const charId = char.id.toString();
+                [...(coParentIdsByChar.get(charId) || [])].forEach(partnerCharId => {
+                    const partnerGroupId = charToGroupMap[partnerCharId];
+                    if (partnerGroupId && partnerGroupId !== node.id) {
+                        partnerGroupIds.add(partnerGroupId);
+                    }
+                });
+            });
+
+            if (partnerGroupIds.size) {
+                partnerGroupIdsByNode.set(node.id, [...partnerGroupIds]);
+            }
+        });
+
         d3Nodes.push({
             id: 'WORLD_ROOT',
             TR: { id: 'WORLD_ROOT', 'First Name': 'Westeros' },
@@ -788,7 +920,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 for (const coParentId of coParentIds) {
                     const partnerChar = byId[coParentId];
                     const partnerParentGroupId = partnerChar ? resolvePrimaryParentGroupId(partnerChar) : null;
-                    if (partnerParentGroupId) return partnerParentGroupId;
+                    if (partnerParentGroupId) {
+                        node.placementCategoryHint = partnerChar?.Sex?.toLowerCase().startsWith('f') ? 1
+                            : partnerChar?.Sex?.toLowerCase().startsWith('m') ? -1
+                                : 0;
+                        return partnerParentGroupId;
+                    }
                 }
             }
 
@@ -874,6 +1011,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             });
 
             alignNodeLevels(rootHierarchy, resolveParentGroupIds, 250);
+            refineNodeHorizontalPositions(rootHierarchy, resolveParentGroupIds, partnerGroupIdsByNode);
 
             rootHierarchy.descendants().forEach(n => {
                 nodeMap[n.id] = n;
