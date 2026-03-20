@@ -570,6 +570,24 @@ const DynastyGraph = ({
     }
   }, [zoom]);
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handleWheel = (e) => {
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 1 / 1.08 : 1.08;
+      const rect = el.getBoundingClientRect();
+      adjustZoom(z => z * factor, {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      });
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [adjustZoom]);
+
   const handleSearchSelect = (dynastyName) => {
     if (!dynastyName) return;
     onToggleDynasty(normalizeDynastyName(dynastyName));
@@ -599,11 +617,6 @@ const DynastyGraph = ({
             startLeft: scrollElement.scrollLeft,
             startTop: scrollElement.scrollTop
           };
-        }}
-        onWheel={(event) => {
-          event.preventDefault();
-          const factor = event.deltaY > 0 ? 1 / 1.08 : 1.08;
-          adjustZoom(z => z * factor, { x: event.clientX - event.currentTarget.getBoundingClientRect().left, y: event.clientY - event.currentTarget.getBoundingClientRect().top });
         }}
         className="absolute inset-0 overflow-auto cursor-grab touch-none"
       >
