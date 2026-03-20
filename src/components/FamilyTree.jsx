@@ -629,6 +629,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
     const { root, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = useMemo(() => {
         if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+        const relationshipSource = allData?.length ? allData : data;
         const byId = {};
         data.forEach(char => {
             byId[char.id.toString()] = char;
@@ -639,8 +640,9 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const charGroupLists = {};
         const parentPairToGroupMap = {};
         const parentPairMemberships = new Map();
+        const coParentIdsByChar = new Map();
 
-        data.forEach(char => {
+        relationshipSource.forEach(char => {
             if (!char.FatherId || !char.MotherId) return;
             const pairKey = getParentPairKey(char.FatherId, char.MotherId);
 
@@ -660,6 +662,17 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 .filter(([, pairKeys]) => pairKeys.size > 1)
                 .map(([parentId]) => parentId)
         );
+
+        relationshipSource.forEach(char => {
+            if (!char.FatherId || !char.MotherId) return;
+
+            const fatherKey = char.FatherId.toString();
+            const motherKey = char.MotherId.toString();
+            if (!coParentIdsByChar.has(fatherKey)) coParentIdsByChar.set(fatherKey, new Set());
+            if (!coParentIdsByChar.has(motherKey)) coParentIdsByChar.set(motherKey, new Set());
+            coParentIdsByChar.get(fatherKey).add(motherKey);
+            coParentIdsByChar.get(motherKey).add(fatherKey);
+        });
 
         const addNodeForChars = (groupChars, explicitId) => {
             if (!groupChars.length) return null;
@@ -712,9 +725,15 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             return d3Node;
         };
 
-        // 1. Create explicit parent-pair nodes for every complete known-parent pairing.
+        // 1. Create explicit parent-pair nodes for complete non-polygamous parent pairings.
         data.forEach(char => {
             if (!char.FatherId || !char.MotherId) return;
+            if (
+                polygamousParentIds.has(char.FatherId.toString())
+                || polygamousParentIds.has(char.MotherId.toString())
+            ) {
+                return;
+            }
 
             const pairKey = getParentPairKey(char.FatherId, char.MotherId);
             if (parentPairToGroupMap[pairKey]) return;
@@ -728,7 +747,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
             const node = addNodeForChars(groupChars, `PAIR:${pairKey}`);
             if (node) {
-                node.isPolygamousPair = polygamousParentIds.has(char.FatherId.toString()) || polygamousParentIds.has(char.MotherId.toString());
                 parentPairToGroupMap[pairKey] = node.id;
             }
         });
@@ -761,7 +779,20 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             const node = d3Nodes.find(n => n.id === nodeId);
             if (!node || node.id === 'WORLD_ROOT') return null;
 
-            return resolvePrimaryParentGroupId(node.TR) || 'WORLD_ROOT';
+            const biologicalParentGroupId = resolvePrimaryParentGroupId(node.TR);
+            if (biologicalParentGroupId) return biologicalParentGroupId;
+
+            if (node.chars.length === 1) {
+                const charId = node.chars[0]?.id?.toString();
+                const coParentIds = [...(coParentIdsByChar.get(charId) || [])];
+                for (const coParentId of coParentIds) {
+                    const partnerChar = byId[coParentId];
+                    const partnerParentGroupId = partnerChar ? resolvePrimaryParentGroupId(partnerChar) : null;
+                    if (partnerParentGroupId) return partnerParentGroupId;
+                }
+            }
+
+            return 'WORLD_ROOT';
         };
 
         d3Nodes.forEach(n => {
