@@ -3,7 +3,7 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 const ThemeContext = createContext();
 
 export const themes = [
-    { id: 'stark', name: 'Stark Winter', bg: 'bg-white', textPrimary: 'text-slate-800', textSecondary: 'text-blue-800/80', border: 'border-blue-900/40', hoverBorder: 'hover:border-blue-600/80', hoverShadow: 'hover:shadow-blue-900/20', cardBg: 'bg-slate-50', link: 'stroke-blue-900/40 hover:stroke-blue-600/60' },
+    { id: 'stark', name: 'Stark Winter', bg: 'bg-white', textPrimary: 'text-slate-800', textSecondary: 'text-blue-800/80', border: 'border-blue-900/40', hoverBorder: 'hover:border-blue-600/80', hoverShadow: 'hover:shadow-blue-900/20', cardBg: 'bg-slate-50', link: 'stroke-[#a4b0d2] hover:stroke-[#8a98bc]' },
 ];
 
 export const ThemeProvider = ({ children }) => {

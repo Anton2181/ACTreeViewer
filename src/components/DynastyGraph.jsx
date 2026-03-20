@@ -12,9 +12,9 @@ const REPULSION_RADIUS = 400;
 const REPULSION_RADIUS_SQUARED = REPULSION_RADIUS ** 2;
 const MAX_REPULSION_FORCE = 0.95;
 const EDGE_COLORS = {
-  marriage: [180, 83, 9],
-  lineage: [30, 64, 175],
-  mixed: [109, 40, 217]
+  marriage: [164, 176, 210],
+  lineage: [164, 176, 210],
+  mixed: [164, 176, 210]
 };
 
 const getEdgeStroke = (relationKey, alpha) => {
@@ -265,7 +265,7 @@ const DynastyGraph = ({
 
     const curveOffset = Math.min(90, 18 * edge.weight);
     const relationKey = edge.relationKinds.length > 1 ? 'mixed' : edge.relationKinds[0];
-    const fade = selectedKeys.size > 0 ? Math.max(0.16, 0.6 - edge.focusDepth * 0.09) : 0.38;
+    const fade = selectedKeys.size > 0 ? Math.max(0.6, 1 - edge.focusDepth * 0.09) : 1;
     const widthScale = selectedKeys.size > 0 ? Math.max(0.58, 1 - edge.focusDepth * 0.08) : 0.8;
 
     return {
