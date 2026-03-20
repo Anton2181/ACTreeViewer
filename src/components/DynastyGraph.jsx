@@ -4,8 +4,8 @@ import { useTheme } from '../ThemeContext';
 import { buildDynastyGraph, getDynastyKey, normalizeDynastyName } from '../utils/dynastyGraph';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const NODE_WIDTH = 164;
-const NODE_HEIGHT = 86;
+const NODE_WIDTH = 132;
+const NODE_HEIGHT = 132;
 const MIN_ZOOM = 0.65;
 const MAX_ZOOM = 2.1;
 const EDGE_COLORS = {
@@ -38,6 +38,7 @@ const DynastyGraph = ({
   const [renderedNodes, setRenderedNodes] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(true);
 
   const graph = useMemo(() => buildDynastyGraph(data), [data]);
 
@@ -459,44 +460,32 @@ const DynastyGraph = ({
                     position.vy = 0;
                   }}
                   onDoubleClick={() => onToggleDynasty(node.name)}
-                  className={`group absolute -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white/92 p-3 text-left shadow-lg backdrop-blur-sm transition duration-200 ${isSelected ? 'border-blue-500 shadow-blue-200/80 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300'}`}
+                  className={`group absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border text-left shadow-lg backdrop-blur-sm transition duration-200 ${isSelected ? 'border-blue-500 shadow-blue-200/80 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300'}`}
                   style={{
                     left: `${node.position.x}px`,
                     top: `${node.position.y}px`,
                     width: `${NODE_WIDTH}px`,
-                    minHeight: `${NODE_HEIGHT}px`
+                    height: `${NODE_HEIGHT}px`
                   }}
                   title="Double-click to focus this dynasty"
                 >
-                  <div className="flex items-start gap-3">
-                    <img
-                      src={getSigilUrl(node.rawHouse)}
-                      alt={`${node.name} coat of arms`}
-                      className="h-12 w-12 rounded-lg border border-slate-200 bg-slate-50 object-contain p-1"
-                      loading="lazy"
-                      onError={(event) => {
-                        const target = event.currentTarget;
-                        if (target.dataset.fallbackApplied === 'true') {
-                          target.style.visibility = 'hidden';
-                          return;
-                        }
-                        target.dataset.fallbackApplied = 'true';
-                        target.src = getSigilFallbackUrl(node.rawHouse);
-                      }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className="text-sm font-semibold text-slate-900">{node.name}</h3>
-                        {isSelected && (
-                          <span className="mt-0.5 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-blue-700">
-                            Focus
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-2 text-xs text-slate-500">
-                        {node.members} member{node.members === 1 ? '' : 's'} · {node.relations} linked relation{node.relations === 1 ? '' : 's'}
-                      </p>
-                    </div>
+                  <img
+                    src={getSigilUrl(node.rawHouse)}
+                    alt={`${node.name} coat of arms`}
+                    className="absolute inset-0 h-full w-full object-contain bg-white/95 p-2"
+                    loading="lazy"
+                    onError={(event) => {
+                      const target = event.currentTarget;
+                      if (target.dataset.fallbackApplied === 'true') {
+                        target.style.visibility = 'hidden';
+                        return;
+                      }
+                      target.dataset.fallbackApplied = 'true';
+                      target.src = getSigilFallbackUrl(node.rawHouse);
+                    }}
+                  />
+                  <div className="absolute inset-x-0 bottom-0 bg-slate-950/68 px-3 py-2 text-center">
+                    <span className="block text-sm font-semibold leading-tight text-white drop-shadow-sm">{node.name}</span>
                   </div>
                 </button>
               );
@@ -505,7 +494,7 @@ const DynastyGraph = ({
         </div>
       </div>
 
-      <div data-no-pan className="absolute left-4 top-4 z-10 w-[min(30rem,calc(100%-2rem))] rounded-2xl border border-white/60 bg-white/88 p-4 shadow-xl backdrop-blur-md">
+      <div data-no-pan className="absolute left-4 top-24 z-10 w-[min(30rem,calc(100%-2rem))] rounded-2xl border border-white/60 bg-white/88 p-4 shadow-xl backdrop-blur-md">
         <div className="mb-3 flex items-center justify-between gap-4">
           <div>
             <h2 className={`text-lg font-semibold ${theme.textPrimary}`}>Dynastic connections</h2>
@@ -589,10 +578,10 @@ const DynastyGraph = ({
         </div>
       )}
 
-      <div data-no-pan className="absolute bottom-4 right-4 z-10 max-w-sm rounded-2xl border border-white/60 bg-white/88 p-4 shadow-xl backdrop-blur-md">
-        <div className="mb-2 flex items-center justify-between gap-4">
-          <h3 className={`text-sm font-semibold ${theme.textPrimary}`}>Focused dynasties</h3>
-          {selectedDynasties.size > 0 && (
+      {selectedDynasties.size > 0 && (
+        <div data-no-pan className="absolute bottom-4 right-4 z-10 max-w-sm rounded-2xl border border-white/60 bg-white/88 p-4 shadow-xl backdrop-blur-md">
+          <div className="mb-2 flex items-center justify-between gap-4">
+            <h3 className={`text-sm font-semibold ${theme.textPrimary}`}>Focused dynasties</h3>
             <button
               type="button"
               data-no-pan
@@ -601,9 +590,7 @@ const DynastyGraph = ({
             >
               Clear
             </button>
-          )}
-        </div>
-        {selectedDynasties.size > 0 ? (
+          </div>
           <div className="flex flex-wrap gap-2">
             {[...selectedDynasties].sort((a, b) => a.localeCompare(b)).map((name) => (
               <button
@@ -618,14 +605,25 @@ const DynastyGraph = ({
               </button>
             ))}
           </div>
-        ) : (
-          <p className="text-xs text-slate-500">No dynasty focus is active. Search or double-click any dynasty node to isolate its network.</p>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div data-no-pan className="pointer-events-none absolute bottom-4 left-4 z-10 rounded-2xl border border-white/60 bg-white/80 px-4 py-2 text-xs text-slate-600 shadow-lg backdrop-blur-md">
-        Pan by dragging the background. Drag a dynasty card to reposition it. Double-click any dynasty to focus its connected graph.
-      </div>
+      {showInstructions && (
+        <div data-no-pan className="absolute bottom-4 left-4 z-10 flex max-w-md items-start gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3 text-xs text-slate-600 shadow-lg backdrop-blur-md">
+          <p className="flex-1 leading-relaxed">
+            Pan by dragging the background. Drag a dynasty card to reposition it. Double-click any dynasty to focus its connected graph.
+          </p>
+          <button
+            type="button"
+            data-no-pan
+            onClick={() => setShowInstructions(false)}
+            className="rounded-full p-1 text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
+            aria-label="Dismiss graph instructions"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

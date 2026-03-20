@@ -7,7 +7,8 @@ export const DEFAULT_EXCLUDED_DYNASTIES = [
   'Rivers',
   'Storm',
   'Stone',
-  'Hill'
+  'Hill',
+  '(Dragon)'
 ];
 
 export const normalizeDynastyName = (value) => (value || '')
