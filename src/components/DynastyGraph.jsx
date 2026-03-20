@@ -6,7 +6,7 @@ import { buildDynastyGraph, getDynastyKey, normalizeDynastyName } from '../utils
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const NODE_WIDTH = 132;
 const NODE_HEIGHT = 132;
-const MIN_ZOOM = 0.65;
+const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 2.1;
 const EDGE_COLORS = {
   marriage: 'rgba(180, 83, 9, 0.58)',
@@ -170,9 +170,6 @@ const DynastyGraph = ({
     const tick = () => {
       const nodes = graphCollections.nodes;
       const edges = graphCollections.edges;
-      const centerX = worldSize.width / 2;
-      const centerY = worldSize.height / 2;
-
       if (!nodes.length) {
         animationFrameRef.current = requestAnimationFrame(tick);
         return;
@@ -186,8 +183,6 @@ const DynastyGraph = ({
         const current = positions[i].state;
         if (!current || current.dragging) continue;
 
-        current.vx += (centerX - current.x) * 0.00025;
-        current.vy += (centerY - current.y) * 0.00025;
 
         for (let j = i + 1; j < positions.length; j += 1) {
           const other = positions[j].state;
@@ -472,8 +467,9 @@ const DynastyGraph = ({
                   <img
                     src={getSigilUrl(node.rawHouse)}
                     alt={`${node.name} coat of arms`}
-                    className="absolute inset-0 h-full w-full object-contain bg-white/95 p-2"
+                    className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain bg-white/95 p-2"
                     loading="lazy"
+                    draggable={false}
                     onError={(event) => {
                       const target = event.currentTarget;
                       if (target.dataset.fallbackApplied === 'true') {
@@ -484,7 +480,8 @@ const DynastyGraph = ({
                       target.src = getSigilFallbackUrl(node.rawHouse);
                     }}
                   />
-                  <div className="absolute inset-x-0 bottom-0 bg-slate-950/68 px-3 py-2 text-center">
+                  <div aria-hidden="true" className="absolute inset-0 z-10" />
+                  <div className="absolute inset-x-0 bottom-0 z-20 bg-slate-950/68 px-3 py-2 text-center">
                     <span className="block text-sm font-semibold leading-tight text-white drop-shadow-sm">{node.name}</span>
                   </div>
                 </button>
@@ -498,7 +495,6 @@ const DynastyGraph = ({
         <div className="mb-3 flex items-center justify-between gap-4">
           <div>
             <h2 className={`text-lg font-semibold ${theme.textPrimary}`}>Dynastic connections</h2>
-            <p className="text-sm text-slate-600">The graph starts in a much larger 4×4 dynastic field. Drag the background to pan, use the zoom controls, or hold Ctrl/⌘ while scrolling to zoom.</p>
           </div>
           {selectedDynasties.size > 0 && (
             <button
