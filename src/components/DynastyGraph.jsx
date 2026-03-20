@@ -163,6 +163,84 @@ const DynastyGraph = ({
     height: Math.max(4800, viewportSize.height * 8)
   }), [viewportSize.height, viewportSize.width]);
 
+  const componentRegions = useMemo(() => {
+    const centralBounds = {
+      x: worldSize.width * 0.25,
+      y: worldSize.height * 0.25,
+      width: worldSize.width * 0.5,
+      height: worldSize.height * 0.5
+    };
+
+    const componentBoxes = baseGraphLayout.components.map((componentIds, componentIndex) => {
+      const localColumns = Math.max(1, Math.ceil(Math.sqrt(componentIds.length)));
+      const localRows = Math.max(1, Math.ceil(componentIds.length / localColumns));
+
+      return {
+        componentIndex,
+        componentIds,
+        componentSize: componentIds.length,
+        localColumns,
+        localRows,
+        baseWidth: Math.max(320, localColumns * 180 + 180),
+        baseHeight: Math.max(280, localRows * 150 + 180)
+      };
+    }).sort((a, b) => b.baseHeight - a.baseHeight || b.baseWidth - a.baseWidth || b.componentSize - a.componentSize);
+
+    const tryPack = (scale) => {
+      const placements = new Map();
+      let cursorX = centralBounds.x;
+      let cursorY = centralBounds.y;
+      let shelfHeight = 0;
+
+      for (const box of componentBoxes) {
+        const width = box.baseWidth * scale;
+        const height = box.baseHeight * scale;
+
+        if (cursorX + width > centralBounds.x + centralBounds.width) {
+          cursorX = centralBounds.x;
+          cursorY += shelfHeight;
+          shelfHeight = 0;
+        }
+
+        if (cursorY + height > centralBounds.y + centralBounds.height) {
+          return null;
+        }
+
+        placements.set(box.componentIndex, {
+          x: cursorX,
+          y: cursorY,
+          width,
+          height,
+          localColumns: box.localColumns,
+          localRows: box.localRows,
+          componentSize: box.componentSize
+        });
+
+        cursorX += width;
+        shelfHeight = Math.max(shelfHeight, height);
+      }
+
+      return placements;
+    };
+
+    let low = 0.25;
+    let high = 1.25;
+    let best = tryPack(low) || new Map();
+
+    for (let iteration = 0; iteration < 14; iteration += 1) {
+      const mid = (low + high) / 2;
+      const packed = tryPack(mid);
+      if (packed) {
+        best = packed;
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+
+    return best;
+  }, [baseGraphLayout.components, worldSize.height, worldSize.width]);
+
   const snapshotNodes = useCallback((nodes) => nodes.map((node) => ({
     ...node,
     position: layoutRef.current.get(node.id) || { x: worldSize.width / 2, y: worldSize.height / 2 }
@@ -216,39 +294,41 @@ const DynastyGraph = ({
   }, []);
 
   useEffect(() => {
-    const componentCount = Math.max(1, baseGraphLayout.components.length);
-    const regionColumns = Math.max(1, Math.ceil(Math.sqrt(componentCount)));
-    const regionRows = Math.max(1, Math.ceil(componentCount / regionColumns));
-    const regionWidth = worldSize.width / regionColumns;
-    const regionHeight = worldSize.height / regionRows;
-
     baseGraphLayout.nodes.forEach((node) => {
       const existing = layoutRef.current.get(node.id);
       if (existing) return;
 
       const hint = baseGraphLayout.layoutHints.get(node.id) || { componentIndex: 0, localIndex: 0, componentSize: 1 };
-      const regionColumn = hint.componentIndex % regionColumns;
-      const regionRow = Math.floor(hint.componentIndex / regionColumns);
-      const localColumns = Math.max(1, Math.ceil(Math.sqrt(hint.componentSize)));
+      const region = componentRegions.get(hint.componentIndex) || {
+        x: worldSize.width * 0.25,
+        y: worldSize.height * 0.25,
+        width: worldSize.width * 0.5,
+        height: worldSize.height * 0.5,
+        localColumns: 1,
+        localRows: 1,
+        componentSize: hint.componentSize
+      };
+      const localColumns = Math.max(1, region.localColumns);
+      const localRows = Math.max(1, region.localRows);
       const localRow = Math.floor(hint.localIndex / localColumns);
       const localColumn = hint.localIndex % localColumns;
-      const localSpacingX = Math.min(220, Math.max(120, regionWidth / (localColumns + 1)));
-      const localSpacingY = Math.min(180, Math.max(110, regionHeight / (Math.ceil(hint.componentSize / localColumns) + 1)));
-      const componentCenterX = regionColumn * regionWidth + regionWidth / 2;
-      const componentCenterY = regionRow * regionHeight + regionHeight / 2;
+      const localSpacingX = Math.min(220, Math.max(120, region.width / (localColumns + 1)));
+      const localSpacingY = Math.min(180, Math.max(110, region.height / (localRows + 1)));
+      const componentCenterX = region.x + region.width / 2;
+      const componentCenterY = region.y + region.height / 2;
       const x = componentCenterX + (localColumn - (localColumns - 1) / 2) * localSpacingX;
-      const y = componentCenterY + (localRow - (Math.ceil(hint.componentSize / localColumns) - 1) / 2) * localSpacingY;
+      const y = componentCenterY + (localRow - (localRows - 1) / 2) * localSpacingY;
 
       layoutRef.current.set(node.id, {
-        x: clamp(x, 180, worldSize.width - 180),
-        y: clamp(y, 160, worldSize.height - 160),
+        x: clamp(x, worldSize.width * 0.12, worldSize.width * 0.88),
+        y: clamp(y, worldSize.height * 0.12, worldSize.height * 0.88),
         vx: 0,
         vy: 0,
         dragging: false
       });
     });
 
-  }, [baseGraphLayout, worldSize.height, worldSize.width]);
+  }, [baseGraphLayout, componentRegions, worldSize.height, worldSize.width]);
 
   useEffect(() => {
     if (hasAutoCenteredRef.current) return;
