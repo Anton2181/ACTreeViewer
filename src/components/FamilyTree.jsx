@@ -708,6 +708,57 @@ const assignHorizontalTreePositions = (rootHierarchy, siblingGap = 110) => {
     assignPositions(rootHierarchy, 0);
 };
 
+const alignSurrogateSpousesOverChildren = (rootHierarchy, getParentGroupIds, rowGap = 30) => {
+    const descendants = rootHierarchy.descendants().filter(node => node.id !== 'WORLD_ROOT');
+    const nodeMap = new Map(descendants.map(node => [node.id, node]));
+    const biologicalChildrenByParent = new Map();
+    const rowsByDepth = new Map();
+
+    descendants.forEach((node) => {
+        if (!rowsByDepth.has(node.depth)) rowsByDepth.set(node.depth, []);
+        rowsByDepth.get(node.depth).push(node);
+
+        node.data.chars.forEach((char) => {
+            getParentGroupIds(char).forEach((parentGroupId) => {
+                if (!parentGroupId || !nodeMap.has(parentGroupId)) return;
+                if (!biologicalChildrenByParent.has(parentGroupId)) {
+                    biologicalChildrenByParent.set(parentGroupId, new Set());
+                }
+                biologicalChildrenByParent.get(parentGroupId).add(node.id);
+            });
+        });
+    });
+
+    [...rowsByDepth.values()].forEach((rowNodes) => {
+        rowNodes.sort((a, b) => a.x - b.x);
+
+        rowNodes.forEach((node) => {
+            if (!node.data?.placementPartnerGroupId) return;
+
+            const childIds = [...(biologicalChildrenByParent.get(node.id) || [])];
+            if (!childIds.length) return;
+
+            const childXs = childIds
+                .map((childId) => nodeMap.get(childId)?.x)
+                .filter(Number.isFinite);
+            if (!childXs.length) return;
+
+            const desiredX = average(childXs, node.x);
+            const index = rowNodes.findIndex(rowNode => rowNode.id === node.id);
+            const previousNode = index > 0 ? rowNodes[index - 1] : null;
+            const nextNode = index < rowNodes.length - 1 ? rowNodes[index + 1] : null;
+            const minX = previousNode
+                ? previousNode.x + getRenderedNodeHalfWidth(previousNode) + getRenderedNodeHalfWidth(node) + rowGap
+                : -Infinity;
+            const maxX = nextNode
+                ? nextNode.x - getRenderedNodeHalfWidth(nextNode) - getRenderedNodeHalfWidth(node) - rowGap
+                : Infinity;
+
+            node.x = Math.min(maxX, Math.max(minX, desiredX));
+        });
+    });
+};
+
 const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const { theme } = useTheme();
     const { root, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = useMemo(() => {
@@ -961,6 +1012,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 assignHorizontalTreePositions(rootHierarchy);
             });
 
+            alignSurrogateSpousesOverChildren(rootHierarchy, resolveParentGroupIds);
             alignNodeLevels(rootHierarchy, resolveParentGroupIds, 250);
 
             rootHierarchy.descendants().forEach(n => {
