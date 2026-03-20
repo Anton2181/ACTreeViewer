@@ -335,12 +335,15 @@ const DynastyGraph = ({
     const element = scrollRef.current;
     if (!element) return;
 
-    const targetLeft = Math.max(0, (worldSize.width * zoom - viewportSize.width) / 2);
-    const targetTop = Math.max(0, (worldSize.height * zoom - viewportSize.height) / 2);
+    const firstRegion = componentRegions.get(0);
+    const initialCenterX = firstRegion ? firstRegion.x + firstRegion.width / 2 : worldSize.width / 2;
+    const initialCenterY = firstRegion ? firstRegion.y + firstRegion.height / 2 : worldSize.height / 2;
+    const targetLeft = Math.max(0, initialCenterX * zoom - viewportSize.width / 2);
+    const targetTop = Math.max(0, initialCenterY * zoom - viewportSize.height / 2);
 
     element.scrollTo({ left: targetLeft, top: targetTop });
     hasAutoCenteredRef.current = true;
-  }, [viewportSize.height, viewportSize.width, worldSize.height, worldSize.width, zoom]);
+  }, [componentRegions, viewportSize.height, viewportSize.width, worldSize.height, worldSize.width, zoom]);
 
   useEffect(() => {
     let isMounted = true;

@@ -775,12 +775,6 @@ const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partner
                     node.x = Math.min(Math.max(node.x, boundedIdealX), maxX);
                 }
 
-                const originalCenter = metadata.baseCenter;
-                const newCenter = average(orderedNodes.map((node) => node.x), 0);
-                const centerDelta = originalCenter - newCenter;
-                orderedNodes.forEach((node) => {
-                    node.x += centerDelta;
-                });
             });
     }
 };
