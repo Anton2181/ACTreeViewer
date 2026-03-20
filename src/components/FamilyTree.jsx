@@ -78,6 +78,11 @@ const getNodeTreeKey = (node) => node?.data?.familyTree || `${getNodeClusterKey(
 
 const getNodeGroupHouse = (node) => node?.data?.groupPreferredHouse || getNodeSubgroupKey(node);
 
+const getOrderingReferenceNode = (node, nodeLookup = {}) => {
+    if (!node?.data?.placementPartnerGroupId) return node;
+    return nodeLookup[node.data.placementPartnerGroupId] || node;
+};
+
 const getParentPairKey = (fatherId, motherId) => `${fatherId || ''}|${motherId || ''}`;
 
 const getParentGroupIdsForChar = (char, parentPairToGroupMap, charToGroupMap, charGroupLists = {}) => {
@@ -428,6 +433,10 @@ const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'pare
 
 const buildSiblingRanks = (rootHierarchy, metrics) => {
     const rankMap = new Map();
+    const nodeLookup = {};
+    rootHierarchy.descendants().forEach(node => {
+        nodeLookup[node.id] = node;
+    });
 
     rootHierarchy.each(node => {
         if (!node.children || node.children.length === 0) return;
@@ -435,23 +444,24 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
         const categoryBuckets = new Map();
         node.children.forEach(child => {
             const category = getCategory(child, node);
+            const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
             if (!categoryBuckets.has(category)) {
                 categoryBuckets.set(category, new Map());
             }
 
-            const clusterKey = getNodeClusterKey(child);
+            const clusterKey = getNodeClusterKey(orderingReferenceNode);
             const clusterBuckets = categoryBuckets.get(category);
             if (!clusterBuckets.has(clusterKey)) {
                 clusterBuckets.set(clusterKey, new Map());
             }
 
-            const treeKey = getNodeTreeKey(child);
+            const treeKey = getNodeTreeKey(orderingReferenceNode);
             const treeBuckets = clusterBuckets.get(clusterKey);
             if (!treeBuckets.has(treeKey)) {
                 treeBuckets.set(treeKey, new Map());
             }
 
-            const subgroupKey = getNodeSubgroupKey(child);
+            const subgroupKey = getNodeSubgroupKey(orderingReferenceNode);
             const subgroupBuckets = treeBuckets.get(treeKey);
             if (!subgroupBuckets.has(subgroupKey)) {
                 subgroupBuckets.set(subgroupKey, []);
@@ -466,14 +476,20 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
             const orderedClusters = [...clusterBuckets.entries()].sort((a, b) => {
                 const aTreeScores = Array.from(a[1].values()).map(subgroupBuckets => average(
                     Array.from(subgroupBuckets.values()).map(children => average(
-                        children.map(child => metrics.get(child.id)?.clusterAnchor ?? child.x),
+                        children.map(child => {
+                            const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
+                            return metrics.get(orderingReferenceNode.id)?.clusterAnchor ?? metrics.get(child.id)?.clusterAnchor ?? child.x;
+                        }),
                         node.x
                     )),
                     node.x
                 ));
                 const bTreeScores = Array.from(b[1].values()).map(subgroupBuckets => average(
                     Array.from(subgroupBuckets.values()).map(children => average(
-                        children.map(child => metrics.get(child.id)?.clusterAnchor ?? child.x),
+                        children.map(child => {
+                            const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
+                            return metrics.get(orderingReferenceNode.id)?.clusterAnchor ?? metrics.get(child.id)?.clusterAnchor ?? child.x;
+                        }),
                         node.x
                     )),
                     node.x
@@ -487,11 +503,17 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
             orderedClusters.forEach(([clusterKey, treeBuckets], clusterIndex) => {
                 const orderedTrees = [...treeBuckets.entries()].sort((a, b) => {
                     const aScore = average(
-                        Array.from(a[1].values()).map(children => average(children.map(child => metrics.get(child.id)?.treeAnchor ?? child.x), node.x)),
+                        Array.from(a[1].values()).map(children => average(children.map(child => {
+                            const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
+                            return metrics.get(orderingReferenceNode.id)?.treeAnchor ?? metrics.get(child.id)?.treeAnchor ?? child.x;
+                        }), node.x)),
                         node.x
                     );
                     const bScore = average(
-                        Array.from(b[1].values()).map(children => average(children.map(child => metrics.get(child.id)?.treeAnchor ?? child.x), node.x)),
+                        Array.from(b[1].values()).map(children => average(children.map(child => {
+                            const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
+                            return metrics.get(orderingReferenceNode.id)?.treeAnchor ?? metrics.get(child.id)?.treeAnchor ?? child.x;
+                        }), node.x)),
                         node.x
                     );
                     if (Math.abs(aScore - bScore) > 1e-6) return aScore - bScore;
@@ -500,8 +522,14 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
 
                 orderedTrees.forEach(([treeKey, subgroupBuckets], treeIndex) => {
                     const orderedSubgroups = [...subgroupBuckets.entries()].sort((a, b) => {
-                        const aScore = average(a[1].map(child => metrics.get(child.id)?.subgroupAnchor ?? child.x), node.x);
-                        const bScore = average(b[1].map(child => metrics.get(child.id)?.subgroupAnchor ?? child.x), node.x);
+                        const aScore = average(a[1].map(child => {
+                            const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
+                            return metrics.get(orderingReferenceNode.id)?.subgroupAnchor ?? metrics.get(child.id)?.subgroupAnchor ?? child.x;
+                        }), node.x);
+                        const bScore = average(b[1].map(child => {
+                            const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
+                            return metrics.get(orderingReferenceNode.id)?.subgroupAnchor ?? metrics.get(child.id)?.subgroupAnchor ?? child.x;
+                        }), node.x);
                         if (Math.abs(aScore - bScore) > 1e-6) return aScore - bScore;
                         return a[0].localeCompare(b[0]);
                     });
@@ -509,7 +537,11 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
                     orderedSubgroups.forEach(([subgroupKey, children], subgroupIndex) => {
                         children
                             .sort((a, b) => {
-                                const scoreDelta = (metrics.get(a.id)?.score ?? a.x) - (metrics.get(b.id)?.score ?? b.x);
+                                const aOrderingReference = getOrderingReferenceNode(a, nodeLookup);
+                                const bOrderingReference = getOrderingReferenceNode(b, nodeLookup);
+                                const scoreDelta =
+                                    (metrics.get(aOrderingReference.id)?.score ?? metrics.get(a.id)?.score ?? a.x)
+                                    - (metrics.get(bOrderingReference.id)?.score ?? metrics.get(b.id)?.score ?? b.x);
                                 if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
 
                                 const birthDelta = getBirthYear(a) - getBirthYear(b);
@@ -688,9 +720,10 @@ const refineNodeHorizontalPositions = (rootHierarchy, getParentGroupIds, partner
             const partnerXs = [...(partnerGroupIdsByNode.get(node.id) || [])]
                 .map((partnerId) => nodeMap.get(partnerId)?.x)
                 .filter(Number.isFinite);
+            const isSimpleChainNode = !!node.parent && !partnerXs.length && !biologicalChildXs.length && !hierarchyChildXs.length;
 
-            addAnchor(node.x, 0.35);
-            addAnchor(node.parent?.x, 0.18);
+            addAnchor(node.x, isSimpleChainNode ? 0.22 : 0.35);
+            addAnchor(node.parent?.x, isSimpleChainNode ? 0.56 : 0.18);
             addAnchor(average(hierarchyChildXs, NaN), hierarchyChildXs.length ? 0.1 : 0);
             addAnchor(average(biologicalChildXs, NaN), biologicalChildXs.length ? 0.24 : 0);
             addAnchor(average(partnerXs, NaN), partnerXs.length ? 0.13 : 0);
@@ -838,7 +871,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 groupSize: groupChars.length,
                 parentId: null,
                 isPolygamousPair: false,
-                placementCategoryHint: 0
+                placementCategoryHint: 0,
+                placementPartnerGroupId: null
             };
 
             d3Node.familyCluster = d3Node.id;
@@ -936,10 +970,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 for (const coParentId of coParentIds) {
                     const partnerChar = byId[coParentId];
                     const partnerParentGroupId = partnerChar ? resolvePrimaryParentGroupId(partnerChar) : null;
+                    const partnerGroupId = charToGroupMap[coParentId] || null;
                     if (partnerParentGroupId) {
                         node.placementCategoryHint = partnerChar?.Sex?.toLowerCase().startsWith('f') ? 1
                             : partnerChar?.Sex?.toLowerCase().startsWith('m') ? -1
                                 : 0;
+                        node.placementPartnerGroupId = partnerGroupId;
                         return partnerParentGroupId;
                     }
                 }
