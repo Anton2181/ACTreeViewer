@@ -929,7 +929,7 @@ const alignSurrogateSpousesOverChildren = (rootHierarchy, getParentGroupIds, row
     });
 };
 
-const prepareNodes = (data, allData, manualTreeOrders, manualSubgroupOrders) => {
+const prepareNodes = (data, allData) => {
     if (!data || data.length === 0) return { d3Nodes: [], parentPairToGroup: {}, charToGroup: {}, charGroupLists: {}, coParentIdsByChar: new Map() };
     const relationshipSource = allData?.length ? allData : data;
     const byId = {};
@@ -1243,27 +1243,31 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         hasAutoMinimizedRef.current = false;
         setIsGenerating(true);
         setShouldComputeLayout(false);
+        
+        // Yield to the browser before computing layout
+        // to allow the 'Loading...' screen to render
+        const timer = setTimeout(() => {
+            setShouldComputeLayout(true);
+            // If there's no data to process, clear the loading screen immediately
+            // Otherwise, let the handleMinimizeCrossings effect clear it after generating the layout
+            if (!data || data.length === 0) {
+                setIsGenerating(false);
+            }
+        }, 50);
+        
+        return () => clearTimeout(timer);
     }, [data, allData]);
-
-    useEffect(() => {
-        if (!shouldComputeLayout && data.length > 0) {
-            const timer = setTimeout(() => {
-                setShouldComputeLayout(true);
-            }, 50);
-            return () => clearTimeout(timer);
-        }
-    }, [data, shouldComputeLayout]);
 
 
     const nodePreparation = useMemo(() => {
-        return prepareNodes(data, allData, manualTreeOrders, manualSubgroupOrders);
-    }, [data, allData]); // Only re-run if underlying data changes, NOT manual orders
+        return prepareNodes(data, allData);
+    }, [data, allData]); // Only re-run if underlying data changes
 
     const layoutResult = useMemo(() => {
         if (!shouldComputeLayout || !nodePreparation.d3Nodes.length) return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         const layout = calculateHierarchyLayout(nodePreparation.d3Nodes, nodePreparation.parentPairToGroup, nodePreparation.charToGroup, nodePreparation.charGroupLists, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders);
         return { ...layout, charToGroup: nodePreparation.charToGroup, charGroupLists: nodePreparation.charGroupLists, parentPairToGroup: nodePreparation.parentPairToGroup };
-    }, [nodePreparation, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders]);
+    }, [nodePreparation, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders, shouldComputeLayout]);
 
     const { root, error, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = layoutResult;
 
@@ -1308,16 +1312,16 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     };
 
     const currentLayoutResult = useMemo(() => {
-        if (!isDevPanelOpen) return { totalScore: 0, perCharCounts: {}, crossings: [], nodeRanks: new Map(), charRanks: new Map() };
+        if (!shouldComputeLayout) return { totalScore: 0, perCharCounts: {}, crossings: [], nodeRanks: new Map(), charRanks: new Map() };
         return calculateCrossings(root, idToNode, resolveParentGroupIds);
-    }, [isDevPanelOpen, root, idToNode, resolveParentGroupIds]);
+    }, [root, idToNode, resolveParentGroupIds, shouldComputeLayout]);
 
     const crossingCounts = currentLayoutResult.perCharCounts;
     const globalCrossingSum = currentLayoutResult.totalScore;
     const currentNodeRanks = currentLayoutResult.nodeRanks;
 
     const potentialCrossingScores = useMemo(() => {
-        if (!isDevPanelOpen || !root || !idToNode || !nodePreparation.d3Nodes.length) return {};
+        if (!root || !idToNode || !nodePreparation.d3Nodes.length) return {};
         const results = {};
         const { d3Nodes, parentPairToGroup, charToGroup, charGroupLists } = nodePreparation;
 
@@ -1387,7 +1391,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         return results;
     }, [root, idToNode, nodePreparation, manualPartnerOrders, manualSubgroupOrders, manualTreeOrders, isDevPanelOpen]);
 
-    const showDevMetadata = import.meta.env.DEV;
+    const showDevMetadata = import.meta.env.MODE !== 'production' && !import.meta.env.PROD;
 
 
     const containerRef = useRef(null);
@@ -1924,44 +1928,41 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             onScroll={handleScroll}
             className={`w-full h-full overflow-hidden ${theme.bg} text-black absolute inset-0 transition-colors duration-500 cursor-grab touch-none`}
         >
-            {/* Legend / Overlay */}
-            <div style={{
-                position: 'fixed',
-                top: '110px',
-                left: '20px',
-                zIndex: 10,
-                background: 'rgba(15, 23, 42, 0.8)',
-                backdropFilter: 'blur(8px)',
-                padding: '12px 16px',
-                borderRadius: '8px',
-                border: '1px solid rgba(148, 163, 184, 0.2)',
-                color: '#94a3b8',
-                fontSize: '12px',
-                pointerEvents: 'none'
-            }}>
-                <div style={{ fontWeight: 'bold', color: '#f8fafc', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span>ACTreeViewer Layout Engine</span>
-                    {showDevMetadata && (
-                        <>
-                            <span style={{ background: '#f59e0b', color: '#1e1b4b', padding: '1px 4px', borderRadius: '4px', fontSize: '10px' }}>DEV</span>
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); setIsDevPanelOpen(!isDevPanelOpen); }}
-                                style={{
-                                    background: isDevPanelOpen ? '#10b981' : '#475569',
-                                    color: isDevPanelOpen ? '#022c22' : '#f8fafc',
-                                    pointerEvents: 'auto',
-                                    border: 'none', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', gap: '4px', display: 'flex', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s', marginLeft: 'auto'
-                                }}
-                            >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isDevPanelOpen ? "M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" : "M15 12a3 3 0 11-6 0 3 3 0 016 0z" } /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isDevPanelOpen ? "" : "M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"} /></svg>
-                                {isDevPanelOpen ? 'Hide Optimizer' : 'Show Optimizer'}
-                            </button>
-                        </>
-                    )}
+            {showDevMetadata && (
+                <div style={{
+                    position: 'fixed',
+                    top: '110px',
+                    left: '20px',
+                    zIndex: 10,
+                    background: 'rgba(15, 23, 42, 0.8)',
+                    backdropFilter: 'blur(8px)',
+                    padding: '12px 16px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(148, 163, 184, 0.2)',
+                    color: '#94a3b8',
+                    fontSize: '12px',
+                    pointerEvents: 'none'
+                }}>
+                    <div style={{ fontWeight: 'bold', color: '#f8fafc', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>ACTreeViewer Layout Engine</span>
+                        <span style={{ background: '#f59e0b', color: '#1e1b4b', padding: '1px 4px', borderRadius: '4px', fontSize: '10px' }}>DEV</span>
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); setIsDevPanelOpen(!isDevPanelOpen); }}
+                            style={{
+                                background: isDevPanelOpen ? '#10b981' : '#475569',
+                                color: isDevPanelOpen ? '#022c22' : '#f8fafc',
+                                pointerEvents: 'auto',
+                                border: 'none', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', gap: '4px', display: 'flex', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s', marginLeft: 'auto'
+                            }}
+                        >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isDevPanelOpen ? "M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" : "M15 12a3 3 0 11-6 0 3 3 0 016 0z" } /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isDevPanelOpen ? "" : "M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"} /></svg>
+                            {isDevPanelOpen ? 'Hide Optimizer' : 'Show Optimizer'}
+                        </button>
+                    </div>
+                    <div>Topological Ranking: <span style={{ color: '#60a5fa' }}>Ranks per Row</span></div>
+                    <div>Crossing Metric: <span style={{ color: globalCrossingSum === 0 ? '#10b981' : '#f43f5e' }}>{globalCrossingSum}</span></div>
                 </div>
-                <div>Topological Ranking: <span style={{ color: '#60a5fa' }}>Ranks per Row</span></div>
-                <div>Crossing Metric: <span style={{ color: globalCrossingSum === 0 ? '#10b981' : '#f43f5e' }}>{globalCrossingSum}</span></div>
-            </div>
+            )}
 
             {/* Dev Panel: Simulated Crossings / Swaps List */}
             {showDevMetadata && isDevPanelOpen && (
