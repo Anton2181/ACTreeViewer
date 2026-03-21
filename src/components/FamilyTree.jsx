@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { stratify } from 'd3-hierarchy';
 import { useTheme } from '../ThemeContext';
 
@@ -17,7 +17,34 @@ class UnionFind {
     }
 }
 
+const getPermutations = (arr) => {
+    if (arr.length <= 1) return [arr];
+    const perms = [];
+    for (let i = 0; i < arr.length; i++) {
+        const rest = getPermutations([...arr.slice(0, i), ...arr.slice(i + 1)]);
+        rest.forEach(r => perms.push([arr[i], ...r]));
+    }
+    return perms;
+};
+
 const getBirthYear = (node) => parseInt(node?.data?.TR?.['Year of Birth'], 10) || 9999;
+
+const getCharXLocal = (node, charId, partnerOrders = {}) => {
+    const nodeCharsRaw = node?.data?.chars || node?.chars || [];
+    if (!nodeCharsRaw.length) return 0;
+    
+    // Use manual partner order if available for this node
+    const partnerOrder = partnerOrders[node.id];
+    const chars = partnerOrder 
+        ? [...partnerOrder.map(id => nodeCharsRaw.find(c => c.id.toString() === id.toString())).filter(Boolean), ...nodeCharsRaw.filter(c => !partnerOrder.includes(c.id.toString()))]
+        : nodeCharsRaw;
+
+    const index = chars.findIndex(c => c.id.toString() === charId.toString());
+    if (index === -1) return 0;
+    const N = chars.length;
+    const W = 190 * N + 20 * (N - 1);
+    return -W / 2 + index * 210 + 95;
+};
 
 const getStableNodeOrder = (node) => {
     const numericId = parseInt(node?.id, 10);
@@ -258,7 +285,7 @@ const assignGraphGroups = (d3Nodes, getParentGroupIds) => {
         });
 };
 
-const assignTreeBlocks = (d3Nodes) => {
+const assignTreeBlocks = (d3Nodes, resolveParentGroupIds, manualTreeOrders = {}, manualSubgroupOrders = {}) => {
     const nodes = d3Nodes.filter(node => node.id !== 'WORLD_ROOT');
     const { adjacency, nodeMap } = buildRelationshipAdjacency(
         nodes,
@@ -276,14 +303,23 @@ const assignTreeBlocks = (d3Nodes) => {
                 .map(node => node.familySubgroup || node.primaryHouse || clusterKey)
         )].sort((a, b) => a.localeCompare(b));
 
-        subgroupOrderByCluster.set(
-            clusterKey,
-            new Map(subgroupKeys.map((key, index) => [key, index + 1]))
-        );
+        const manualSubOrder = manualSubgroupOrders[clusterKey];
+        const finalSubOrder = manualSubOrder 
+            ? [...manualSubOrder, ...subgroupKeys.filter(k => !manualSubOrder.includes(k))]
+            : subgroupKeys;
+
+        const subgroupIndexMap = new Map(finalSubOrder.map((key, index) => [key, index + 1]));
+        subgroupOrderByCluster.set(clusterKey, subgroupIndexMap);
+        
+        nodes.filter(n => n.familyCluster === clusterKey).forEach(n => {
+            const skey = n.familySubgroup || n.primaryHouse || clusterKey;
+            n.familySubgroupIndex = subgroupIndexMap.get(skey) || 1;
+        });
     });
 
     const visited = new Set();
-    const clusterTreeCounts = new Map();
+    const clusterTrees = new Map(); // clusterKey -> array of components
+
     nodes.forEach(node => {
         if (visited.has(node.id)) return;
 
@@ -306,20 +342,111 @@ const assignTreeBlocks = (d3Nodes) => {
 
         component.sort((a, b) => getBirthYear({ data: a }) - getBirthYear({ data: b }) || getStableNodeOrder(a) - getStableNodeOrder(b));
         const clusterKey = node.familyCluster;
-        const treeIndex = (clusterTreeCounts.get(clusterKey) || 0) + 1;
-        clusterTreeCounts.set(clusterKey, treeIndex);
+        if (!clusterTrees.has(clusterKey)) {
+            clusterTrees.set(clusterKey, []);
+        }
+        const treeRootId = component[0].id;
+        component.forEach(node => node.familyTreeRootId = treeRootId);
+        clusterTrees.get(clusterKey).push({ component, rootId: treeRootId });
+    });
 
-        component.forEach(member => {
-            const subgroupKey = member.familySubgroup || member.primaryHouse || clusterKey;
-            const subgroupIndex = subgroupOrderByCluster.get(clusterKey)?.get(subgroupKey) || 1;
-            member.familyTree = `${clusterKey}::tree:${treeIndex}`;
-            member.familyTreeIndex = treeIndex;
-            member.blockHierarchyId = `G${clusterOrder.get(clusterKey) || 1}.S${subgroupIndex}.T${treeIndex}`;
+    // Optimize tree order for each cluster to minimize connection lengths
+    clusterTrees.forEach((treeData, clusterKey) => {
+        const trees = treeData.map(td => td.component);
+        if (trees.length <= 1) {
+            trees.forEach((tree, idx) => {
+                const treeIndex = idx + 1;
+                tree.forEach(member => {
+                    const subgroupKey = member.familySubgroup || member.primaryHouse || clusterKey;
+                    const subgroupIndex = subgroupOrderByCluster.get(clusterKey)?.get(subgroupKey) || 1;
+                    member.familyTree = `${clusterKey}::tree:${treeIndex}`;
+                    member.familyTreeIndex = treeIndex;
+                    member.blockHierarchyId = `G${clusterOrder.get(clusterKey) || 1}.S${subgroupIndex}.T${treeIndex}`;
+                });
+            });
+            return;
+        }
+
+        // 1. Map each node to its tree index within the cluster
+        const nodeIdToTreeIdx = new Map();
+        trees.forEach((tree, treeIdx) => {
+            tree.forEach(node => nodeIdToTreeIdx.set(node.id, treeIdx));
+        });
+
+        // 2. Identify connections between trees (inter-tree parent/child pairs)
+        const treeEdges = [];
+        trees.forEach((tree, treeIdx) => {
+            tree.forEach(node => {
+                node.chars.forEach(char => {
+                    resolveParentGroupIds(char).forEach(parentId => {
+                        const targetTreeIdx = nodeIdToTreeIdx.get(parentId);
+                        if (targetTreeIdx !== undefined && targetTreeIdx !== treeIdx) {
+                            treeEdges.push([treeIdx, targetTreeIdx]);
+                        }
+                    });
+                });
+            });
+        });
+
+        // 3. Find optimal permutation of trees (or use manual override)
+        let bestOrder = Array.from({ length: trees.length }, (_, i) => i);
+        const clusterManualOrder = manualTreeOrders[clusterKey];
+
+        if (clusterManualOrder) {
+            const treeRootIdToIdx = new Map(treeData.map((td, i) => [td.rootId, i]));
+            const nextOrder = clusterManualOrder
+                .map(id => treeRootIdToIdx.get(id))
+                .filter(idx => idx !== undefined);
+
+            const missingIndices = Array.from({ length: trees.length }, (_, i) => i)
+                .filter(i => !nextOrder.includes(i));
+            bestOrder = [...nextOrder, ...missingIndices];
+        } else if (trees.length <= 8) {
+            const perms = getPermutations(bestOrder);
+            let minCost = Infinity;
+
+            perms.forEach(perm => {
+                const pos = new Array(trees.length);
+                perm.forEach((treeIdx, p) => (pos[treeIdx] = p));
+
+                let cost = 0;
+                treeEdges.forEach(([a, b]) => {
+                    cost += Math.abs(pos[a] - pos[b]);
+                });
+
+                if (cost < minCost) {
+                    minCost = cost;
+                    bestOrder = perm;
+                }
+            });
+        } else {
+            // Heuristic (already sorted by birth year of first character)
+            // Exhaustive search is capped to maintain layout performance
+        }
+
+        // 4. Assign metadata based on optimized order
+        bestOrder.forEach((treeIdx, orderIdx) => {
+            const treeIndex = orderIdx + 1;
+            const treeRootId = treeData[treeIdx].rootId; // Fix: Get rootId from treeData
+            trees[treeIdx].forEach(member => {
+                const subgroupKey = member.familySubgroup || member.primaryHouse || clusterKey;
+                const subgroupIndex = subgroupOrderByCluster.get(clusterKey)?.get(subgroupKey) || 1;
+                member.familyTree = `${clusterKey}::tree:${treeIndex}`;
+                member.familyTreeIndex = treeIndex;
+                member.familyTreeRootId = treeRootId;
+                member.blockHierarchyId = `G${clusterOrder.get(clusterKey) || 1}.S${subgroupIndex}.T${treeIndex}`;
+                
+                // Propagate to characters for easy access during render/interaction
+                member.chars.forEach(c => {
+                    c.familySubgroup = subgroupKey;
+                    c.familyTreeRootId = treeRootId;
+                });
+            });
         });
     });
 };
 
-const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'parent') => {
+const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'parent', partnerOrders = {}) => {
     const nodes = rootHierarchy.descendants();
     const nodeMap = {};
     nodes.forEach(node => {
@@ -389,7 +516,15 @@ const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'pare
         const childAnchors = allChildrenIds
             .map(id => nodeMap[id])
             .filter(Boolean)
-            .map(child => descendantAnchor.get(child.id) ?? child.x);
+            .map(childNode => {
+                // Find which characters in CHILD node have THIS parent node as a parent
+                const relevantChildChars = childNode.data.chars.filter(c => getParentGroupIds(c).includes(node.id));
+                if (relevantChildChars.length > 0) {
+                    const childXs = relevantChildChars.map(c => childNode.x + getCharXLocal(childNode, c.id.toString(), partnerOrders));
+                    return average(childXs, childNode.x);
+                }
+                return childNode.x;
+            });
             
         descendantAnchor.set(node.id, average(childAnchors, node.x));
     });
@@ -407,7 +542,9 @@ const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'pare
             getParentGroupIds(char).forEach(parentGroupId => {
                 if (!parentGroupId || uniqueParentGroups.has(parentGroupId) || !nodeMap[parentGroupId]) return;
                 uniqueParentGroups.add(parentGroupId);
-                parentAnchors.push(nodeMap[parentGroupId].x);
+                // For parent centers, node center is sufficient but character offsets are even better
+                const pNode = nodeMap[parentGroupId];
+                parentAnchors.push(pNode.x);
             });
         });
 
@@ -424,7 +561,7 @@ const buildOrderingMetrics = (rootHierarchy, getParentGroupIds, emphasis = 'pare
         const childAnchor = descendantAnchor.get(node.id) ?? node.x;
         const relatedAnchors = [...parentAnchors, childAnchor].filter(value => Number.isFinite(value));
 
-        // Emphasis weights: child weights are boosted to ensure relationships pull families together
+        // Emphasis weights
         const weights = emphasis === 'children'
             ? { parent: 0.15, cluster: 0.15, tree: 0.3, subgroup: 0.1, child: 0.3 }
             : { parent: 0.3, cluster: 0.1, tree: 0.4, subgroup: 0.1, child: 0.1 };
@@ -523,6 +660,12 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
 
             orderedClusters.forEach(([clusterKey, treeBuckets], clusterIndex) => {
                 const orderedTrees = [...treeBuckets.entries()].sort((a, b) => {
+                    const nodeA = Array.from(a[1].values())[0][0];
+                    const nodeB = Array.from(b[1].values())[0][0];
+                    const idxA = nodeA.data.familyTreeIndex || 999;
+                    const idxB = nodeB.data.familyTreeIndex || 999;
+                    if (idxA !== idxB) return idxA - idxB;
+
                     const aScore = average(
                         Array.from(a[1].values()).map(children => average(children.map(child => {
                             const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
@@ -543,6 +686,12 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
 
                 orderedTrees.forEach(([treeKey, subgroupBuckets], treeIndex) => {
                     const orderedSubgroups = [...subgroupBuckets.entries()].sort((a, b) => {
+                        const nodeA = a[1][0];
+                        const nodeB = b[1][0];
+                        const idxA = nodeA.data.familySubgroupIndex || 999;
+                        const idxB = nodeB.data.familySubgroupIndex || 999;
+                        if (idxA !== idxB) return idxA - idxB;
+
                         const aScore = average(a[1].map(child => {
                             const orderingReferenceNode = getOrderingReferenceNode(child, nodeLookup);
                             return metrics.get(orderingReferenceNode.id)?.subgroupAnchor ?? metrics.get(child.id)?.subgroupAnchor ?? child.x;
@@ -556,20 +705,19 @@ const buildSiblingRanks = (rootHierarchy, metrics) => {
                     });
 
                     orderedSubgroups.forEach(([subgroupKey, children], subgroupIndex) => {
-                        children
-                            .sort((a, b) => {
-                                const aOrderingReference = getOrderingReferenceNode(a, nodeLookup);
-                                const bOrderingReference = getOrderingReferenceNode(b, nodeLookup);
-                                const scoreDelta =
-                                    (metrics.get(aOrderingReference.id)?.score ?? metrics.get(a.id)?.score ?? a.x)
-                                    - (metrics.get(bOrderingReference.id)?.score ?? metrics.get(b.id)?.score ?? b.x);
-                                if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
+                                children
+                                    .sort((a, b) => {
+                                        const birthDelta = getBirthYear(a) - getBirthYear(b);
+                                        if (birthDelta !== 0) return birthDelta;
 
-                                const birthDelta = getBirthYear(a) - getBirthYear(b);
-                                if (birthDelta !== 0) return birthDelta;
+                                        const stableDelta = getStableNodeOrder(a) - getStableNodeOrder(b);
+                                        if (stableDelta !== 0) return stableDelta;
 
-                                return getStableNodeOrder(a) - getStableNodeOrder(b);
-                            })
+                                        const aOrderingReference = getOrderingReferenceNode(a, nodeLookup);
+                                        const bOrderingReference = getOrderingReferenceNode(b, nodeLookup);
+                                        return (metrics.get(aOrderingReference.id)?.score ?? metrics.get(a.id)?.score ?? a.x)
+                                             - (metrics.get(bOrderingReference.id)?.score ?? metrics.get(b.id)?.score ?? b.x);
+                                    })
                             .forEach((child, childIndex) => {
                                 rankMap.set(child.id, {
                                     categoryIndex,
@@ -781,285 +929,343 @@ const alignSurrogateSpousesOverChildren = (rootHierarchy, getParentGroupIds, row
     });
 };
 
-const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
-    const { theme } = useTheme();
-    const { root, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = useMemo(() => {
-        if (!data || data.length === 0) return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
-        const relationshipSource = allData?.length ? allData : data;
-        const byId = {};
-        data.forEach(char => {
-            byId[char.id.toString()] = char;
+const prepareNodes = (data, allData, manualTreeOrders, manualSubgroupOrders) => {
+    if (!data || data.length === 0) return { d3Nodes: [], parentPairToGroup: {}, charToGroup: {}, charGroupLists: {}, coParentIdsByChar: new Map() };
+    const relationshipSource = allData?.length ? allData : data;
+    const byId = {};
+    data.forEach(char => { byId[char.id.toString()] = char; });
+
+    const d3Nodes = [];
+    const charToGroupMap = {};
+    const charGroupLists = {};
+    const parentPairToGroupMap = {};
+    const parentPairMemberships = new Map();
+    const coParentIdsByChar = new Map();
+
+    relationshipSource.forEach(char => {
+        if (!char.FatherId || !char.MotherId) return;
+        const pairKey = getParentPairKey(char.FatherId, char.MotherId);
+        [char.FatherId, char.MotherId].filter(Boolean).forEach(parentId => {
+            const parentKey = parentId.toString();
+            if (!parentPairMemberships.has(parentKey)) parentPairMemberships.set(parentKey, new Set());
+            parentPairMemberships.get(parentKey).add(pairKey);
         });
+    });
 
-        const d3Nodes = [];
-        const charToGroupMap = {};
-        const charGroupLists = {};
-        const parentPairToGroupMap = {};
-        const parentPairMemberships = new Map();
-        const coParentIdsByChar = new Map();
+    const polygamousParentIds = new Set(
+        [...parentPairMemberships.entries()]
+            .filter(([, pairKeys]) => pairKeys.size > 1)
+            .map(([parentId]) => parentId)
+    );
 
-        relationshipSource.forEach(char => {
-            if (!char.FatherId || !char.MotherId) return;
-            const pairKey = getParentPairKey(char.FatherId, char.MotherId);
+    relationshipSource.forEach(char => {
+        if (!char.FatherId || !char.MotherId) return;
+        const fatherKey = char.FatherId.toString();
+        const motherKey = char.MotherId.toString();
+        if (!coParentIdsByChar.has(fatherKey)) coParentIdsByChar.set(fatherKey, new Set());
+        if (!coParentIdsByChar.has(motherKey)) coParentIdsByChar.set(motherKey, new Set());
+        coParentIdsByChar.get(fatherKey).add(motherKey);
+        coParentIdsByChar.get(motherKey).add(fatherKey);
+    });
 
-            [char.FatherId, char.MotherId]
-                .filter(Boolean)
-                .forEach(parentId => {
-                    const parentKey = parentId.toString();
-                    if (!parentPairMemberships.has(parentKey)) {
-                        parentPairMemberships.set(parentKey, new Set());
-                    }
-                    parentPairMemberships.get(parentKey).add(pairKey);
-                });
+    const addNodeForChars = (groupChars, explicitId) => {
+        if (!groupChars.length) return null;
+        let tr = groupChars[0];
+        let score = -1;
+        groupChars.forEach(c => {
+            let s = 0;
+            if (c.Sex && c.Sex.toLowerCase().startsWith('m')) s += 1;
+            if (c.FatherId || c.MotherId) s += 2;
+            if (s > score) { score = s; tr = c; }
         });
-
-        const polygamousParentIds = new Set(
-            [...parentPairMemberships.entries()]
-                .filter(([, pairKeys]) => pairKeys.size > 1)
-                .map(([parentId]) => parentId)
-        );
-
-        relationshipSource.forEach(char => {
-            if (!char.FatherId || !char.MotherId) return;
-
-            const fatherKey = char.FatherId.toString();
-            const motherKey = char.MotherId.toString();
-            if (!coParentIdsByChar.has(fatherKey)) coParentIdsByChar.set(fatherKey, new Set());
-            if (!coParentIdsByChar.has(motherKey)) coParentIdsByChar.set(motherKey, new Set());
-            coParentIdsByChar.get(fatherKey).add(motherKey);
-            coParentIdsByChar.get(motherKey).add(fatherKey);
+        groupChars.sort((a, b) => {
+            const aM = a.Sex && a.Sex.toLowerCase().startsWith('m') ? 0 : 1;
+            const bM = b.Sex && b.Sex.toLowerCase().startsWith('m') ? 0 : 1;
+            if (aM !== bM) return aM - bM;
+            return 0;
         });
-
-        const addNodeForChars = (groupChars, explicitId) => {
-            if (!groupChars.length) return null;
-            let tr = groupChars[0];
-            let score = -1;
-            groupChars.forEach(c => {
-                let s = 0;
-                if (c.Sex && c.Sex.toLowerCase().startsWith('m')) s += 1;
-                if (c.FatherId || c.MotherId) s += 2;
-                if (s > score) {
-                    score = s;
-                    tr = c;
-                }
-            });
-
-            groupChars.sort((a, b) => {
-                const aM = a.Sex && a.Sex.toLowerCase().startsWith('m') ? 0 : 1;
-                const bM = b.Sex && b.Sex.toLowerCase().startsWith('m') ? 0 : 1;
-                if (aM !== bM) return aM - bM;
-                if (a.id === tr.id) return -1;
-                if (b.id === tr.id) return 1;
-                return 0;
-            });
-
-            const d3Node = {
-                id: explicitId || tr.id.toString(),
-                TR: tr,
-                chars: groupChars,
-                primaryHouse: getDominantHouse(groupChars),
-                groupPreferredHouse: '',
-                familyCluster: '',
-                familySubgroup: '',
-                familyTree: '',
-                blockHierarchyId: '',
-                groupSize: groupChars.length,
-                parentId: null,
-                isPolygamousPair: false,
-                placementCategoryHint: 0,
-                placementPartnerGroupId: null
-            };
-
-            d3Node.familyCluster = d3Node.id;
-            d3Node.familySubgroup = d3Node.primaryHouse || d3Node.id;
-
-            groupChars.forEach(c => {
-                const charId = c.id.toString();
-                if (!charGroupLists[charId]) charGroupLists[charId] = [];
-                charGroupLists[charId].push(d3Node.id);
-                if (!charToGroupMap[charId]) charToGroupMap[charId] = d3Node.id;
-            });
-            d3Nodes.push(d3Node);
-            return d3Node;
+        const d3Node = {
+            id: explicitId || tr.id.toString(),
+            TR: tr,
+            chars: groupChars,
+            primaryHouse: getDominantHouse(groupChars),
+            groupPreferredHouse: '',
+            familyCluster: '',
+            familySubgroup: '',
+            familyTree: '',
+            blockHierarchyId: '',
+            groupSize: groupChars.length,
+            parentId: null,
+            isPolygamousPair: false,
+            placementCategoryHint: 0,
+            placementPartnerGroupId: null
         };
-
-        // 1. Create explicit parent-pair nodes for complete non-polygamous parent pairings.
-        data.forEach(char => {
-            if (!char.FatherId || !char.MotherId) return;
-            if (
-                polygamousParentIds.has(char.FatherId.toString())
-                || polygamousParentIds.has(char.MotherId.toString())
-            ) {
-                return;
-            }
-
-            const pairKey = getParentPairKey(char.FatherId, char.MotherId);
-            if (parentPairToGroupMap[pairKey]) return;
-
-            const groupChars = [
-                char.FatherId ? byId[char.FatherId.toString()] : null,
-                char.MotherId ? byId[char.MotherId.toString()] : null
-            ].filter(Boolean);
-
-            if (!groupChars.length) return;
-
-            const node = addNodeForChars(groupChars, `PAIR:${pairKey}`);
-            if (node) {
-                parentPairToGroupMap[pairKey] = node.id;
-            }
+        d3Node.familyCluster = d3Node.id;
+        d3Node.familySubgroup = d3Node.primaryHouse || d3Node.id;
+        groupChars.forEach(c => {
+            const charId = c.id.toString();
+            if (!charGroupLists[charId]) charGroupLists[charId] = [];
+            charGroupLists[charId].push(d3Node.id);
+            if (!charToGroupMap[charId]) charToGroupMap[charId] = d3Node.id;
         });
+        d3Nodes.push(d3Node);
+        return d3Node;
+    };
 
-        // 2. Add solo nodes for people who never appear in a partnership node.
-        data.forEach(char => {
-            const charId = char.id.toString();
-            if (charGroupLists[charId]?.length) return;
-            addNodeForChars([char], `SOLO:${charId}`);
-        });
+    data.forEach(char => {
+        if (!char.FatherId || !char.MotherId) return;
+        if (polygamousParentIds.has(char.FatherId.toString()) || polygamousParentIds.has(char.MotherId.toString())) return;
+        const pairKey = getParentPairKey(char.FatherId, char.MotherId);
+        if (parentPairToGroupMap[pairKey]) return;
+        const groupChars = [char.FatherId ? byId[char.FatherId.toString()] : null, char.MotherId ? byId[char.MotherId.toString()] : null].filter(Boolean);
+        if (!groupChars.length) return;
+        const node = addNodeForChars(groupChars, `PAIR:${pairKey}`);
+        if (node) parentPairToGroupMap[pairKey] = node.id;
+    });
 
-        d3Nodes.push({
-            id: 'WORLD_ROOT',
-            TR: { id: 'WORLD_ROOT', 'First Name': 'Westeros' },
-            chars: [],
-            primaryHouse: '',
-            groupPreferredHouse: 'WORLD_ROOT',
-            familyCluster: 'WORLD_ROOT',
-            familySubgroup: 'WORLD_ROOT',
-            familyTree: 'WORLD_ROOT',
-            blockHierarchyId: 'G0.S0.T0',
-            groupSize: 1,
-            parentId: null
-        });
+    data.forEach(char => {
+        const charId = char.id.toString();
+        if (charGroupLists[charId]?.length) return;
+        addNodeForChars([char], `SOLO:${charId}`);
+    });
 
-        // 4. Resolve topologies
-        const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroupMap, charToGroupMap, charGroupLists);
-        const resolvePrimaryParentGroupId = (char) => getPrimaryParentGroupIdForChar(char, parentPairToGroupMap, charToGroupMap, charGroupLists);
-        const getSafeParent = (nodeId) => {
-            const node = d3Nodes.find(n => n.id === nodeId);
-            if (!node || node.id === 'WORLD_ROOT') return null;
+    d3Nodes.push({
+        id: 'WORLD_ROOT',
+        TR: { id: 'WORLD_ROOT', 'First Name': 'Westeros' },
+        chars: [],
+        primaryHouse: '',
+        groupPreferredHouse: 'WORLD_ROOT',
+        familyCluster: 'WORLD_ROOT',
+        familySubgroup: 'WORLD_ROOT',
+        familyTree: 'WORLD_ROOT',
+        blockHierarchyId: 'G0.S0.T0',
+        groupSize: 1,
+        parentId: null
+    });
 
-            const biologicalParentGroupId = resolvePrimaryParentGroupId(node.TR);
-            if (biologicalParentGroupId) return biologicalParentGroupId;
-
-            if (node.chars.length === 1) {
-                const charId = node.chars[0]?.id?.toString();
-                const coParentIds = [...(coParentIdsByChar.get(charId) || [])];
-                for (const coParentId of coParentIds) {
-                    const partnerChar = byId[coParentId];
-                    const partnerParentGroupId = partnerChar ? resolvePrimaryParentGroupId(partnerChar) : null;
-                    const partnerGroupId = charToGroupMap[coParentId] || null;
+    const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroupMap, charToGroupMap, charGroupLists);
+    const resolvePrimaryParentGroupId = (char) => getPrimaryParentGroupIdForChar(char, parentPairToGroupMap, charToGroupMap, charGroupLists);
+    const getSafeParent = (nodeId) => {
+        const node = d3Nodes.find(n => n.id === nodeId);
+        if (!node || node.id === 'WORLD_ROOT') return null;
+        const biologicalParentGroupId = resolvePrimaryParentGroupId(node.TR);
+        if (biologicalParentGroupId) return biologicalParentGroupId;
+        if (node.chars.length === 1) {
+            const charId = node.chars[0]?.id?.toString();
+            const coParentIds = [...(coParentIdsByChar.get(charId) || [])];
+            for (const coParentId of coParentIds) {
+                const partnerChar = byId[coParentId];
+                if (partnerChar) {
+                    const partnerParentGroupId = resolvePrimaryParentGroupId(partnerChar);
                     if (partnerParentGroupId) {
-                        node.placementCategoryHint = partnerChar?.Sex?.toLowerCase().startsWith('f') ? 1
-                            : partnerChar?.Sex?.toLowerCase().startsWith('m') ? -1
-                                : 0;
-                        node.placementPartnerGroupId = partnerGroupId;
+                        node.placementCategoryHint = partnerChar?.Sex?.toLowerCase().startsWith('f') ? 1 : -1;
+                        node.placementPartnerGroupId = charToGroupMap[coParentId];
                         return partnerParentGroupId;
                     }
                 }
             }
-
-            return 'WORLD_ROOT';
-        };
-
-        d3Nodes.forEach(n => {
-            if (n.id !== 'WORLD_ROOT') {
-                n.parentId = getSafeParent(n.id);
-            }
-        });
-
-        assignGraphGroups(d3Nodes, resolveParentGroupIds);
-        assignLineageSubgroups(d3Nodes, resolveParentGroupIds);
-        assignTreeBlocks(d3Nodes);
-
-        // 5. Break biological loop errors
-        const visited = new Set();
-        const stack = new Set();
-
-        const breakCycle = (nodeId) => {
-            if (!nodeId || nodeId === 'WORLD_ROOT') return false;
-            if (stack.has(nodeId)) return true;
-            if (visited.has(nodeId)) return false;
-
-            visited.add(nodeId);
-            stack.add(nodeId);
-
-            const node = d3Nodes.find(n => n.id === nodeId);
-            if (node && node.parentId) {
-                if (breakCycle(node.parentId)) {
-                    node.parentId = 'WORLD_ROOT';
-                }
-            }
-
-            stack.delete(nodeId);
-            return false;
-        };
-
-        d3Nodes.forEach(n => {
-            if (!visited.has(n.id)) breakCycle(n.id);
-        });
-
-        try {
-            const rootHierarchy = stratify()
-                .id(d => d.id)
-                .parentId(d => d.parentId)(d3Nodes);
-
-            // Initial Arbitrary Layout Pass to establish parent X coordinates
-            rootHierarchy.sort((a, b) => {
-                const houseDelta = getNodeGroupHouse(a).localeCompare(getNodeGroupHouse(b));
-                if (houseDelta !== 0) return houseDelta;
-
-                const clusterDelta = getNodeClusterKey(a).localeCompare(getNodeClusterKey(b));
-                if (clusterDelta !== 0) return clusterDelta;
-
-                const treeDelta = getNodeTreeKey(a).localeCompare(getNodeTreeKey(b));
-                if (treeDelta !== 0) return treeDelta;
-
-                const subgroupDelta = getNodeSubgroupKey(a).localeCompare(getNodeSubgroupKey(b));
-                if (subgroupDelta !== 0) return subgroupDelta;
-
-                const birthDelta = getBirthYear(a) - getBirthYear(b);
-                if (birthDelta !== 0) return birthDelta;
-
-                return getStableNodeOrder(a) - getStableNodeOrder(b);
-            });
-
-            assignHorizontalTreePositions(rootHierarchy);
-
-            const layoutPasses = ['parent', 'children', 'parent', 'children'];
-            const nodeMap = {};
-
-            layoutPasses.forEach(emphasis => {
-                const metrics = buildOrderingMetrics(rootHierarchy, resolveParentGroupIds, emphasis);
-                const siblingRanks = buildSiblingRanks(rootHierarchy, metrics);
-                rootHierarchy.sort((a, b) => compareNodeOrder(a, b, metrics, siblingRanks));
-                assignHorizontalTreePositions(rootHierarchy);
-            });
-
-            alignSurrogateSpousesOverChildren(rootHierarchy, resolveParentGroupIds);
-            alignNodeLevels(rootHierarchy, resolveParentGroupIds, 250);
-
-            rootHierarchy.descendants().forEach(n => {
-                nodeMap[n.id] = n;
-            });
-
-            // Calculate bounds
-            let minX = 0, maxX = 0, minY = 0, maxY = 0;
-            rootHierarchy.descendants().forEach(n => {
-                if (n.id === 'WORLD_ROOT') return;
-                const N = n.data.chars.length;
-                const W = 190 * N + 20 * (N - 1);
-                const halfW = W / 2;
-                minX = Math.min(minX, n.x - halfW);
-                maxX = Math.max(maxX, n.x + halfW);
-                minY = Math.min(minY, n.y);
-                maxY = Math.max(maxY, n.y + 120);
-            });
-
-            return { root: rootHierarchy, idToNode: nodeMap, charToGroup: charToGroupMap, charGroupLists, parentPairToGroup: parentPairToGroupMap, bounds: { minX, maxX, minY, maxY } };
-        } catch (e) {
-            console.error("Tree layout error:", e);
-            return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
         }
-    }, [allData, data]);
+        return 'WORLD_ROOT';
+    };
+
+    d3Nodes.forEach(n => { if (n.id !== 'WORLD_ROOT') n.parentId = getSafeParent(n.id); });
+    return { d3Nodes, parentPairToGroup: parentPairToGroupMap, charToGroup: charToGroupMap, charGroupLists, coParentIdsByChar };
+};
+
+const calculateHierarchyLayout = (d3Nodes, parentPairToGroup, charToGroup, charGroupLists, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders, fastMode = false) => {
+    const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroup, charToGroup, charGroupLists);
+    
+    // 1. Assign manual blocks
+    assignGraphGroups(d3Nodes, resolveParentGroupIds);
+    assignLineageSubgroups(d3Nodes, resolveParentGroupIds);
+    assignTreeBlocks(d3Nodes, resolveParentGroupIds, manualTreeOrders, manualSubgroupOrders);
+
+    // 2. Break cycles
+    const visited = new Set(), stack = new Set();
+    const breakCycle = (nodeId) => {
+        if (!nodeId || nodeId === 'WORLD_ROOT') return false;
+        if (stack.has(nodeId)) return true;
+        if (visited.has(nodeId)) return false;
+        visited.add(nodeId); stack.add(nodeId);
+        const node = d3Nodes.find(n => n.id === nodeId);
+        if (node?.parentId && breakCycle(node.parentId)) node.parentId = 'WORLD_ROOT';
+        stack.delete(nodeId); return false;
+    };
+    d3Nodes.forEach(n => { if (!visited.has(n.id)) breakCycle(n.id); });
+
+    try {
+        const rootHierarchy = stratify().id(d => d.id).parentId(d => d.parentId)(d3Nodes);
+        const initialSort = (a, b) => {
+            const houseDelta = getNodeGroupHouse(a).localeCompare(getNodeGroupHouse(b));
+            if (houseDelta !== 0) return houseDelta;
+            const clusterDelta = getNodeClusterKey(a).localeCompare(getNodeClusterKey(b));
+            if (clusterDelta !== 0) return clusterDelta;
+            const treeDelta = getNodeTreeKey(a).localeCompare(getNodeTreeKey(b));
+            if (treeDelta !== 0) return treeDelta;
+            const subgroupDelta = getNodeSubgroupKey(a).localeCompare(getNodeSubgroupKey(b));
+            if (subgroupDelta !== 0) return subgroupDelta;
+            const birthDelta = getBirthYear(a) - getBirthYear(b);
+            if (birthDelta !== 0) return birthDelta;
+            return getStableNodeOrder(a) - getStableNodeOrder(b);
+        };
+        rootHierarchy.sort(initialSort);
+        assignHorizontalTreePositions(rootHierarchy);
+
+        const layoutPasses = fastMode ? ['parent'] : ['parent', 'children', 'parent', 'children'];
+        layoutPasses.forEach(emphasis => {
+            const metrics = buildOrderingMetrics(rootHierarchy, resolveParentGroupIds, emphasis, manualPartnerOrders);
+            const siblingRanks = buildSiblingRanks(rootHierarchy, metrics);
+            rootHierarchy.sort((a, b) => compareNodeOrder(a, b, metrics, siblingRanks));
+            assignHorizontalTreePositions(rootHierarchy);
+        });
+
+        alignSurrogateSpousesOverChildren(rootHierarchy, resolveParentGroupIds);
+        alignNodeLevels(rootHierarchy, resolveParentGroupIds, 250);
+
+        const nodeMap = {};
+        rootHierarchy.descendants().forEach(n => { nodeMap[n.id] = n; });
+
+        let minX = 0, maxX = 0, minY = 0, maxY = 0;
+        rootHierarchy.descendants().forEach(n => {
+            if (n.id === 'WORLD_ROOT') return;
+            const N = n.data.chars.length;
+            const W = 190 * N + 20 * (N - 1);
+            minX = Math.min(minX, n.x - W / 2); maxX = Math.max(maxX, n.x + W / 2);
+            minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y + 120);
+        });
+
+        return { root: rootHierarchy, idToNode: nodeMap, bounds: { minX, maxX, minY, maxY } };
+    } catch (e) {
+        console.error("Layout refinement error:", e);
+        return { root: null, error: String(e.stack || e), idToNode: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+    }
+};
+
+const computeTreeLayout = (data, allData, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders) => {
+    const prep = prepareNodes(data, allData, manualTreeOrders, manualSubgroupOrders);
+    if (!prep.d3Nodes.length) return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+    const layout = calculateHierarchyLayout(prep.d3Nodes, prep.parentPairToGroup, prep.charToGroup, prep.charGroupLists, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders);
+    return { ...layout, charToGroup: prep.charToGroup, charGroupLists: prep.charGroupLists, parentPairToGroup: prep.parentPairToGroup };
+};
+
+const calculateCrossings = (rootNode, nodeMap, resolveParentGroupIds) => {
+    if (!rootNode || !nodeMap) return { totalScore: 0, perCharCounts: {}, crossings: [] };
+    
+    const rowNodes = {};
+    rootNode.descendants().forEach(n => {
+        if (n.id === 'WORLD_ROOT') return;
+        const y = Math.round(n.y);
+        if (!rowNodes[y]) rowNodes[y] = [];
+        rowNodes[y].push(n);
+    });
+
+    const nodeRanks = new Map();
+    const charRanks = new Map();
+
+    Object.keys(rowNodes).forEach(y => {
+        const nodesInRow = [...rowNodes[y]].sort((a, b) => a.x - b.x);
+        nodesInRow.forEach((n, idx) => nodeRanks.set(n.id, idx));
+        
+        const charsInRow = [];
+        nodesInRow.forEach(n => {
+            n.data.chars.forEach(c => {
+                charsInRow.push({ id: c.id.toString(), name: c['First Name'], nodeId: n.id });
+            });
+        });
+        charsInRow.forEach((c, idx) => charRanks.set(c.id, idx));
+    });
+    nodeRanks.set('WORLD_ROOT', 0);
+
+    let totalCrossingScore = 0;
+    const perCharCounts = {};
+    const crossingPairs = [];
+
+    rootNode.descendants().forEach(node => {
+        if (node.id === 'WORLD_ROOT') return;
+        const myRow = Math.round(node.y);
+        
+        node.data.chars.forEach(me => {
+            const mePos = charRanks.get(me.id.toString());
+            const myParentIds = resolveParentGroupIds(me);
+            
+            myParentIds.forEach(myParentId => {
+                const myParentNode = nodeMap[myParentId];
+                if (!myParentNode || myParentId === 'WORLD_ROOT') return;
+                const myParentRank = nodeRanks.get(myParentId);
+                const parentRow = Math.round(myParentNode.y);
+
+                (rowNodes[myRow] || []).forEach(peerNode => {
+                    peerNode.data.chars.forEach(peer => {
+                        if (peer.id.toString() === me.id.toString()) return;
+                        const peerPos = charRanks.get(peer.id.toString());
+                        const peerParentIds = resolveParentGroupIds(peer);
+
+                        peerParentIds.forEach(peerParentId => {
+                            const peerParentNode = nodeMap[peerParentId];
+                            if (!peerParentNode || Math.round(peerParentNode.y) !== parentRow) return;
+                            const peerParentRank = nodeRanks.get(peerParentId);
+
+                            if (myParentId !== peerParentId && (mePos < peerPos) !== (myParentRank < peerParentRank)) {
+                                totalCrossingScore += 0.5;
+                                if (!perCharCounts[me.id]) perCharCounts[me.id] = { score: 0, debug: [] };
+                                perCharCounts[me.id].score += 1;
+                                
+                                const debugName = peer['First Name'] || peer.id;
+                                if (!perCharCounts[me.id].debug.includes(debugName)) {
+                                    perCharCounts[me.id].debug.push(debugName);
+                                }
+                                if (me.id < peer.id) {
+                                    crossingPairs.push(`${me['First Name'] || me.id} ↔ ${peer['First Name'] || peer.id}`);
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    });
+
+    return { totalScore: Math.floor(totalCrossingScore), perCharCounts, crossings: crossingPairs.sort(), nodeRanks, charRanks };
+};
+
+const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
+    const { theme } = useTheme();
+    const [manualTreeOrders, setManualTreeOrders] = useState({});
+    const [manualSubgroupOrders, setManualSubgroupOrders] = useState({});
+    const [manualPartnerOrders, setManualPartnerOrders] = useState({});
+
+    const [isDevPanelOpen, setIsDevPanelOpen] = useState(false);
+    const [isGenerating, setIsGenerating] = useState(true);
+    const [shouldComputeLayout, setShouldComputeLayout] = useState(false);
+    const hasAutoMinimizedRef = useRef(false);
+
+    useEffect(() => {
+        hasAutoMinimizedRef.current = false;
+        setIsGenerating(true);
+        setShouldComputeLayout(false);
+    }, [data, allData]);
+
+    useEffect(() => {
+        if (!shouldComputeLayout && data.length > 0) {
+            const timer = setTimeout(() => {
+                setShouldComputeLayout(true);
+            }, 50);
+            return () => clearTimeout(timer);
+        }
+    }, [data, shouldComputeLayout]);
+
+
+    const nodePreparation = useMemo(() => {
+        return prepareNodes(data, allData, manualTreeOrders, manualSubgroupOrders);
+    }, [data, allData]); // Only re-run if underlying data changes, NOT manual orders
+
+    const layoutResult = useMemo(() => {
+        if (!shouldComputeLayout || !nodePreparation.d3Nodes.length) return { root: null, idToNode: {}, charToGroup: {}, charGroupLists: {}, parentPairToGroup: {}, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 } };
+        const layout = calculateHierarchyLayout(nodePreparation.d3Nodes, nodePreparation.parentPairToGroup, nodePreparation.charToGroup, nodePreparation.charGroupLists, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders);
+        return { ...layout, charToGroup: nodePreparation.charToGroup, charGroupLists: nodePreparation.charGroupLists, parentPairToGroup: nodePreparation.parentPairToGroup };
+    }, [nodePreparation, manualTreeOrders, manualSubgroupOrders, manualPartnerOrders]);
+
+    const { root, error, idToNode, charToGroup, charGroupLists, parentPairToGroup, bounds } = layoutResult;
 
     const charDirectory = useMemo(() => {
         const source = allData?.length ? allData : data;
@@ -1067,72 +1273,128 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     }, [allData, data]);
 
     const getParentLabel = (char, parentType) => {
-        const nameField = parentType === 'father' ? 'Father' : 'Mother';
         const idField = parentType === 'father' ? 'FatherId' : 'MotherId';
-
+        const nameField = parentType === 'father' ? 'Father' : 'Mother';
         if (char[nameField]) return char[nameField];
         if (!char[idField]) return '';
-
         return getCharacterDisplayName(charDirectory.get(char[idField].toString()));
-    };
-
-    const showDevMetadata = import.meta.env.DEV;
-
-    if (!root) {
-        return <div className="text-gray-400 p-8">No valid tree data found.</div>;
-    }
-
-    // Helper geometry for clustered layouts
-    const getCharXLocal = (node, charId) => {
-        const chars = node.data.chars;
-        if (!chars) return 0;
-        const index = chars.findIndex(c => c.id.toString() === charId.toString());
-        if (index === -1) return 0;
-        const N = chars.length;
-        const W = 190 * N + 20 * (N - 1);
-        return -W / 2 + index * 210 + 95;
     };
 
     const getCharXGlobal = (nodeId, charId) => {
         const node = idToNode[nodeId];
         if (!node) return 0;
-        return node.x + getCharXLocal(node, charId);
+        return node.x + getCharXLocal(node, charId, manualPartnerOrders);
     };
 
-    const resolveParentGroupIds = (char) => getParentGroupIdsForChar(char, parentPairToGroup, charToGroup, charGroupLists);
+    const resolveParentGroupIds = React.useCallback(
+        (char) => getParentGroupIdsForChar(char, parentPairToGroup, charToGroup, charGroupLists),
+        [parentPairToGroup, charToGroup, charGroupLists]
+    );
+
+    const resolvePrimaryParentGroupId = React.useCallback(
+        (char) => getPrimaryParentGroupIdForChar(char, parentPairToGroup, charToGroup, charGroupLists),
+        [parentPairToGroup, charToGroup, charGroupLists]
+    );
 
     const getParentAnchorGlobals = (parentGroupNode, childChar) => {
         if (parentGroupNode.id === 'WORLD_ROOT') return [parentGroupNode.x];
-
         const anchors = [];
-        const fId = childChar.FatherId?.toString();
-        const mId = childChar.MotherId?.toString();
-
-        if (fId && parentGroupNode.data.chars.some(parent => parent.id.toString() === fId)) {
-            const x = getCharXGlobal(parentGroupNode.id, fId);
-            if (x !== undefined && !isNaN(x)) anchors.push(x);
-        }
-
-        if (mId && parentGroupNode.data.chars.some(parent => parent.id.toString() === mId)) {
-            const x = getCharXGlobal(parentGroupNode.id, mId);
-            if (x !== undefined && !isNaN(x)) anchors.push(x);
-        }
-
+        const fId = childChar.FatherId?.toString(), mId = childChar.MotherId?.toString();
+        if (fId && parentGroupNode.data.chars.some(p => p.id.toString() === fId)) anchors.push(getCharXGlobal(parentGroupNode.id, fId));
+        if (mId && parentGroupNode.data.chars.some(p => p.id.toString() === mId)) anchors.push(getCharXGlobal(parentGroupNode.id, mId));
         if (!anchors.length) return [parentGroupNode.x];
-
-        const isProperPairNode = parentGroupNode.data?.id?.startsWith('PAIR:') && anchors.length === 2;
-        if (isProperPairNode && !parentGroupNode.data?.isPolygamousPair) {
-            return [(anchors[0] + anchors[1]) / 2];
-        }
-
+        if (parentGroupNode.data?.id?.startsWith('PAIR:') && anchors.length === 2 && !parentGroupNode.data?.isPolygamousPair) return [(anchors[0] + anchors[1]) / 2];
         return anchors;
     };
+
+    const currentLayoutResult = useMemo(() => {
+        if (!isDevPanelOpen) return { totalScore: 0, perCharCounts: {}, crossings: [], nodeRanks: new Map(), charRanks: new Map() };
+        return calculateCrossings(root, idToNode, resolveParentGroupIds);
+    }, [isDevPanelOpen, root, idToNode, resolveParentGroupIds]);
+
+    const crossingCounts = currentLayoutResult.perCharCounts;
+    const globalCrossingSum = currentLayoutResult.totalScore;
+    const currentNodeRanks = currentLayoutResult.nodeRanks;
+
+    const potentialCrossingScores = useMemo(() => {
+        if (!isDevPanelOpen || !root || !idToNode || !nodePreparation.d3Nodes.length) return {};
+        const results = {};
+        const { d3Nodes, parentPairToGroup, charToGroup, charGroupLists } = nodePreparation;
+
+        root.descendants().forEach(node => {
+            if (node.id === 'WORLD_ROOT') return;
+            const chars = node.data.chars, N = chars.length;
+            if (N < 2) return;
+            chars.slice(0, N - 1).forEach((charA, i) => {
+                const charB = chars[i + 1];
+                const hasAncestorsA = charA.FatherId || charA.MotherId;
+                const hasAncestorsB = charB.FatherId || charB.MotherId;
+                if (!hasAncestorsA || !hasAncestorsB) return;
+
+                const getUnitKey = (n) => n.familySubgroup || n.primaryHouse || n.familyCluster;
+                const getOriginInfo = (char) => {
+                    const pIds = getParentGroupIdsForChar(char, parentPairToGroup, charToGroup, charGroupLists);
+                    if (pIds && pIds.length > 0) {
+                        const pNode = idToNode[pIds[0]];
+                        if (pNode) return { unit: getUnitKey(pNode.data), tree: pNode.data.familyTreeRootId };
+                    }
+                    return { unit: char['House'] || char['Primary House'] || char.familySubgroup, tree: char.familyTreeRootId };
+                };
+
+                const originA = getOriginInfo(charA), originB = getOriginInfo(charB);
+                const unitA = originA.unit, unitB = originB.unit, treeA = String(originA.tree), treeB = String(originB.tree);
+                if (unitA === unitB && treeA === treeB) return;
+                
+                // Simulate Swap
+                const clusterKey = node.data.familyCluster;
+                const nextSubOrders = { ...manualSubgroupOrders };
+                if (unitA && unitB && unitA !== unitB) {
+                    const currentOrder = manualSubgroupOrders[clusterKey] || [];
+                    let newOrder = [...currentOrder];
+                    if (newOrder.length === 0) {
+                        const groupNodes = root.descendants().filter(n => n.data.familyCluster === clusterKey);
+                        newOrder = [...new Set(groupNodes.map(n => getUnitKey(n.data)))];
+                        newOrder.sort((a, b) => (groupNodes.find(n => getUnitKey(n.data) === a)?.data.blockHierarchyId || '').localeCompare(groupNodes.find(n => getUnitKey(n.data) === b)?.data.blockHierarchyId || ''));
+                    }
+                    const idxA = newOrder.indexOf(unitA), idxB = newOrder.indexOf(unitB);
+                    if (idxA !== -1 && idxB !== -1) [newOrder[idxA], newOrder[idxB]] = [newOrder[idxB], newOrder[idxA]];
+                    nextSubOrders[clusterKey] = newOrder;
+                }
+
+                const nextTreeOrders = { ...manualTreeOrders };
+                if (treeA !== 'undefined' && treeB !== 'undefined' && treeA !== treeB) {
+                    const currentOrder = manualTreeOrders[clusterKey] || [];
+                    let newOrder = [...currentOrder];
+                    if (newOrder.length === 0) {
+                        const roots = [...new Set(Object.values(idToNode).filter(n => n.data.familyCluster === clusterKey).map(node => String(node.data.familyTreeRootId)))].filter(r => r !== 'undefined');
+                        newOrder = roots.sort((a, b) => (Object.values(idToNode).find(n => String(n.data.familyTreeRootId) === a)?.data.familyTreeIndex || 0) - (Object.values(idToNode).find(n => String(n.data.familyTreeRootId) === b)?.data.familyTreeIndex || 0));
+                    }
+                    const idxA = newOrder.indexOf(treeA), idxB = newOrder.indexOf(treeB);
+                    if (idxA !== -1 && idxB !== -1) [newOrder[idxA], newOrder[idxB]] = [newOrder[idxB], newOrder[idxA]];
+                    nextTreeOrders[clusterKey] = newOrder;
+                }
+
+                // OPTIMIZED SIMULATION: Clone d3Nodes and run calculateHierarchyLayout in fastMode
+                const simNodes = d3Nodes.map(n => ({...n}));
+                const simLayout = calculateHierarchyLayout(simNodes, parentPairToGroup, charToGroup, charGroupLists, nextTreeOrders, nextSubOrders, manualPartnerOrders, true);
+                if (simLayout.root) {
+                    const simResolveParent = (c) => getParentGroupIdsForChar(c, parentPairToGroup, charToGroup, charGroupLists);
+                    results[`${node.id}-${i}`] = calculateCrossings(simLayout.root, simLayout.idToNode, simResolveParent);
+                }
+            });
+        });
+        
+        return results;
+    }, [root, idToNode, nodePreparation, manualPartnerOrders, manualSubgroupOrders, manualTreeOrders, isDevPanelOpen]);
+
+    const showDevMetadata = import.meta.env.DEV;
+
 
     const containerRef = useRef(null);
     const pointerDragRef = React.useRef({ isDragging: false, startX: 0, startY: 0 });
     const [zoom, setZoom] = useState(1);
     const zoomRef = React.useRef(1);
-    const [scrollRatio, setScrollRatio] = useState(0);
+    const sliderRef = React.useRef(null);
 
     // Dynamic canvas size
     const CANVAS_WIDTH = (bounds.maxX - bounds.minX) + 400;
@@ -1152,14 +1414,122 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
     const panStartRef = React.useRef({ x: 0, y: 0 });
     // Char ID to scroll to after the next re-render (set before filter change, consumed after)
     const scrollToCharRef = React.useRef(null);
+    const skipRecenterRef = React.useRef(false);
     // Pivot for zoom stabilization
     const zoomPivotRef = React.useRef(null); // { unscaledX, unscaledY, mouseX, mouseY }
 
     // Search + Zoom State
+    const handleMinimizeCrossings = () => {
+        if (!root || !nodePreparation.d3Nodes.length) return;
+
+        let anyImprovement = true;
+        let iteration = 0;
+        let nextSubOrders = { ...manualSubgroupOrders };
+        let nextTreeOrders = { ...manualTreeOrders };
+
+        while (anyImprovement && iteration < 50) {
+            anyImprovement = false;
+            iteration++;
+            
+            // Re-run minimal layout for current simulation state
+            const simNodes = nodePreparation.d3Nodes.map(n => ({...n}));
+            const currentSim = calculateHierarchyLayout(simNodes, parentPairToGroup, charToGroup, charGroupLists, nextTreeOrders, nextSubOrders, manualPartnerOrders, true);
+            if (!currentSim.root) break;
+
+            const currentScore = calculateCrossings(currentSim.root, currentSim.idToNode, (c) => getParentGroupIdsForChar(c, parentPairToGroup, charToGroup, charGroupLists)).totalScore;
+            
+            let bestSwap = null;
+            let maxReduction = 0;
+
+            // Find best atomic swap
+            currentSim.root.descendants().forEach(node => {
+                if (node.id === 'WORLD_ROOT') return;
+                const chars = node.data.chars, N = chars.length;
+                if (N < 2) return;
+                chars.slice(0, N - 1).forEach((charA, i) => {
+                    const charB = chars[i + 1];
+                    
+                    const getUnitKey = (n) => n.familySubgroup || n.primaryHouse || n.familyCluster;
+                    const getOriginInfo = (char) => {
+                        const pIds = getParentGroupIdsForChar(char, parentPairToGroup, charToGroup, charGroupLists);
+                        if (pIds && pIds.length > 0) {
+                            const pNode = currentSim.idToNode[pIds[0]];
+                            if (pNode) return { unit: getUnitKey(pNode.data), tree: pNode.data.familyTreeRootId };
+                        }
+                        return { unit: char['House'] || char['Primary House'] || char.familySubgroup, tree: char.familyTreeRootId };
+                    };
+                    const originA = getOriginInfo(charA), originB = getOriginInfo(charB);
+                    const unitA = originA.unit, unitB = originB.unit, treeA = String(originA.tree), treeB = String(originB.tree);
+                    if (unitA === unitB && treeA === treeB) return;
+
+                    // SIMULATE
+                    const clusterKey = node.data.familyCluster;
+                    const testSubOrders = { ...nextSubOrders };
+                    if (unitA && unitB && unitA !== unitB) {
+                        const currentOrder = testSubOrders[clusterKey] || [];
+                        let newOrder = [...currentOrder];
+                        if (newOrder.length === 0) {
+                            const groupNodes = currentSim.root.descendants().filter(n => n.data.familyCluster === clusterKey);
+                            newOrder = [...new Set(groupNodes.map(n => getUnitKey(n.data)))];
+                            newOrder.sort((a, b) => (groupNodes.find(n => getUnitKey(n.data) === a)?.data.blockHierarchyId || '').localeCompare(groupNodes.find(n => getUnitKey(n.data) === b)?.data.blockHierarchyId || ''));
+                        }
+                        const idxA = newOrder.indexOf(unitA), idxB = newOrder.indexOf(unitB);
+                        if (idxA !== -1 && idxB !== -1) [newOrder[idxA], newOrder[idxB]] = [newOrder[idxB], newOrder[idxA]];
+                        testSubOrders[clusterKey] = newOrder;
+                    }
+
+                    const testTreeOrders = { ...nextTreeOrders };
+                    if (treeA !== 'undefined' && treeB !== 'undefined' && treeA !== treeB) {
+                        const currentOrder = testTreeOrders[clusterKey] || [];
+                        let newOrder = [...currentOrder];
+                        if (newOrder.length === 0) {
+                            const roots = [...new Set(Object.values(currentSim.idToNode).filter(n => n.data.familyCluster === clusterKey).map(node => String(node.data.familyTreeRootId)))].filter(r => r !== 'undefined');
+                            newOrder = roots.sort((a, b) => (Object.values(currentSim.idToNode).find(n => String(n.data.familyTreeRootId) === a)?.data.familyTreeIndex || 0) - (Object.values(currentSim.idToNode).find(n => String(n.data.familyTreeRootId) === b)?.data.familyTreeIndex || 0));
+                        }
+                        const idxA = newOrder.indexOf(treeA), idxB = newOrder.indexOf(treeB);
+                        if (idxA !== -1 && idxB !== -1) [newOrder[idxA], newOrder[idxB]] = [newOrder[idxB], newOrder[idxA]];
+                        testTreeOrders[clusterKey] = newOrder;
+                    }
+
+                    const testNodes = nodePreparation.d3Nodes.map(n => ({...n}));
+                    const testLayout = calculateHierarchyLayout(testNodes, parentPairToGroup, charToGroup, charGroupLists, testTreeOrders, testSubOrders, manualPartnerOrders, true);
+                    const testScore = calculateCrossings(testLayout.root, testLayout.idToNode, (c) => getParentGroupIdsForChar(c, parentPairToGroup, charToGroup, charGroupLists)).totalScore;
+                    
+                    const reduction = currentScore - testScore;
+                    if (reduction > maxReduction) {
+                        maxReduction = reduction;
+                        bestSwap = { sub: testSubOrders[clusterKey], tree: testTreeOrders[clusterKey], clusterKey };
+                    }
+                });
+            });
+
+            if (bestSwap && maxReduction > 0) {
+                if (bestSwap.sub) nextSubOrders[bestSwap.clusterKey] = bestSwap.sub;
+                if (bestSwap.tree) nextTreeOrders[bestSwap.clusterKey] = bestSwap.tree;
+                anyImprovement = true;
+            }
+        }
+
+        setManualSubgroupOrders(nextSubOrders);
+        setManualTreeOrders(nextTreeOrders);
+    };
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [highlightedCharId, setHighlightedCharId] = useState(null);
+
+    // Auto-minimize on initial data load
+    useEffect(() => {
+        if (!hasAutoMinimizedRef.current && nodePreparation.d3Nodes.length > 0 && root) {
+            hasAutoMinimizedRef.current = true;
+            // Short delay ensures we don't aggressively block the very first frame
+            setTimeout(() => {
+                handleMinimizeCrossings();
+                setIsGenerating(false);
+            }, 50);
+        }
+    }, [nodePreparation.d3Nodes, root]);
+
     const [isZoomOpen, setIsZoomOpen] = useState(false);
 
     // On mount / data change
@@ -1187,6 +1557,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                 return;
             }
         }
+        
+        if (skipRecenterRef.current) {
+            skipRecenterRef.current = false;
+            return;
+        }
+        
         setTimeout(handleRecenter, 0);
     }, [root]);
 
@@ -1340,14 +1716,13 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         const el = containerRef.current;
         if (!el) return;
         const maxScroll = el.scrollWidth - el.clientWidth;
-        if (maxScroll > 0) {
-            setScrollRatio(el.scrollLeft / maxScroll);
+        if (maxScroll > 0 && sliderRef.current) {
+            sliderRef.current.value = el.scrollLeft / maxScroll;
         }
     };
 
     const handleSliderChange = (e) => {
         const ratio = parseFloat(e.target.value);
-        setScrollRatio(ratio);
         const el = containerRef.current;
         if (el) {
             const maxScroll = el.scrollWidth - el.clientWidth;
@@ -1457,6 +1832,87 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
         };
     }, []);
 
+    const handleMarriageSwap = (e, clusterKey, unitA, unitB, treeA, treeB) => {
+        e.stopPropagation();
+        skipRecenterRef.current = true;
+
+        // 1. Swap Ancestor Families (Subgroups) if different
+        if (unitA && unitB && unitA !== unitB) {
+            setManualSubgroupOrders(prev => {
+                const current = prev[clusterKey] || [];
+                let newOrder = [...current];
+                if (newOrder.length === 0) {
+                    const groupNodes = root.descendants().filter(n => n.data.familyCluster === clusterKey);
+                    const getUnitKey = (n) => n.familySubgroup || n.primaryHouse || n.familyCluster;
+                    newOrder = [...new Set(groupNodes.map(n => getUnitKey(n.data)))];
+                    newOrder.sort((a, b) => {
+                        const nA = groupNodes.find(n => getUnitKey(n.data) === a);
+                        const nB = groupNodes.find(n => getUnitKey(n.data) === b);
+                        return (nA?.data.blockHierarchyId || '').localeCompare(nB?.data.blockHierarchyId || '');
+                    });
+                }
+                const idxA = newOrder.indexOf(unitA);
+                const idxB = newOrder.indexOf(unitB);
+                if (idxA !== -1 && idxB !== -1) {
+                    const nextOrder = [...newOrder];
+                    [nextOrder[idxA], nextOrder[idxB]] = [nextOrder[idxB], nextOrder[idxA]];
+                    return { ...prev, [clusterKey]: nextOrder };
+                }
+                return prev;
+            });
+        } 
+
+        // 2. Swap Ancestor Tree branches if different
+        if (treeA !== 'undefined' && treeB !== 'undefined' && treeA !== treeB) {
+            setManualTreeOrders(prev => {
+                const currentOrder = prev[clusterKey] || [];
+                let newOrder = [...currentOrder];
+                if (newOrder.length === 0) {
+                    const roots = [...new Set(Object.values(idToNode)
+                        .filter(n => n.data.familyCluster === clusterKey)
+                        .map(node => String(node.data.familyTreeRootId)))].filter(r => r !== 'undefined');
+                    newOrder = roots.sort((a, b) => {
+                        const nodeA = Object.values(idToNode).find(n => String(n.data.familyTreeRootId) === a);
+                        const nodeB = Object.values(idToNode).find(n => String(n.data.familyTreeRootId) === b);
+                        return (nodeA?.data.familyTreeIndex || 0) - (nodeB?.data.familyTreeIndex || 0);
+                    });
+                }
+                const idxA = newOrder.indexOf(treeA);
+                const idxB = newOrder.indexOf(treeB);
+                if (idxA !== -1 && idxB !== -1) {
+                    const nextOrder = [...newOrder];
+                    [nextOrder[idxA], nextOrder[idxB]] = [nextOrder[idxB], nextOrder[idxA]];
+                    return { ...prev, [clusterKey]: nextOrder };
+                }
+                return prev;
+            });
+        }
+    };
+
+    if (isGenerating) {
+        return (
+            <div className={`fixed inset-0 flex flex-col items-center justify-center gap-6 ${theme.background}`}>
+                <div className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
+                <div className={`${theme.textPrimary} text-xl font-light tracking-wide animate-pulse`}>
+                    Loading...
+                </div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className={`p-8 ${theme.bg} min-h-screen max-w-full overflow-auto text-red-400 font-mono text-xs whitespace-pre-wrap`}>
+                <div className="font-bold text-lg mb-4 text-red-500">Layout Engine Crashed</div>
+                {error}
+            </div>
+        );
+    }
+
+    if (!root) {
+        return <div className={`text-gray-400 p-8 ${theme.background} min-h-screen flex items-center justify-center`}>No valid tree data found.</div>;
+    }
+
     return (
         <div
             ref={containerRef}
@@ -1468,6 +1924,160 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
             onScroll={handleScroll}
             className={`w-full h-full overflow-hidden ${theme.bg} text-black absolute inset-0 transition-colors duration-500 cursor-grab touch-none`}
         >
+            {/* Legend / Overlay */}
+            <div style={{
+                position: 'fixed',
+                top: '110px',
+                left: '20px',
+                zIndex: 10,
+                background: 'rgba(15, 23, 42, 0.8)',
+                backdropFilter: 'blur(8px)',
+                padding: '12px 16px',
+                borderRadius: '8px',
+                border: '1px solid rgba(148, 163, 184, 0.2)',
+                color: '#94a3b8',
+                fontSize: '12px',
+                pointerEvents: 'none'
+            }}>
+                <div style={{ fontWeight: 'bold', color: '#f8fafc', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>ACTreeViewer Layout Engine</span>
+                    {showDevMetadata && (
+                        <>
+                            <span style={{ background: '#f59e0b', color: '#1e1b4b', padding: '1px 4px', borderRadius: '4px', fontSize: '10px' }}>DEV</span>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setIsDevPanelOpen(!isDevPanelOpen); }}
+                                style={{
+                                    background: isDevPanelOpen ? '#10b981' : '#475569',
+                                    color: isDevPanelOpen ? '#022c22' : '#f8fafc',
+                                    pointerEvents: 'auto',
+                                    border: 'none', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', gap: '4px', display: 'flex', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s', marginLeft: 'auto'
+                                }}
+                            >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isDevPanelOpen ? "M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" : "M15 12a3 3 0 11-6 0 3 3 0 016 0z" } /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isDevPanelOpen ? "" : "M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"} /></svg>
+                                {isDevPanelOpen ? 'Hide Optimizer' : 'Show Optimizer'}
+                            </button>
+                        </>
+                    )}
+                </div>
+                <div>Topological Ranking: <span style={{ color: '#60a5fa' }}>Ranks per Row</span></div>
+                <div>Crossing Metric: <span style={{ color: globalCrossingSum === 0 ? '#10b981' : '#f43f5e' }}>{globalCrossingSum}</span></div>
+            </div>
+
+            {/* Dev Panel: Simulated Crossings / Swaps List */}
+            {showDevMetadata && isDevPanelOpen && (
+                <div 
+                    data-no-pan
+                    style={{
+                        position: 'fixed',
+                        top: '200px',
+                        left: '20px',
+                        zIndex: 10,
+                        background: 'rgba(15, 23, 42, 0.9)',
+                        backdropFilter: 'blur(8px)',
+                        padding: '12px 16px',
+                        borderRadius: '8px',
+                        border: '1px solid rgba(148, 163, 184, 0.2)',
+                        color: '#94a3b8',
+                        fontSize: '12px',
+                        maxHeight: 'calc(100vh - 140px)',
+                        overflowY: 'auto',
+                        width: '320px',
+                        pointerEvents: 'auto'
+                    }}
+                >
+                    <div style={{ fontWeight: 'bold', color: '#f8fafc', marginBottom: '8px', borderBottom: '1px solid rgba(148, 163, 184, 0.2)', paddingBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Simulated Pairs</span>
+                        <button
+                            onClick={handleMinimizeCrossings}
+                            className="px-2 py-0.5 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 rounded text-[10px] transition-all transform active:scale-95"
+                            title="Optimize Layout: Automatically minimize crossings"
+                        >
+                            Minimize All
+                        </button>
+                    </div>
+                    {Object.entries(potentialCrossingScores)
+                        .filter(([_, pd]) => pd !== null && pd !== undefined)
+                        .sort(([keyA, pdA], [keyB, pdB]) => {
+                            const benefitA = globalCrossingSum - pdA.totalScore;
+                            const benefitB = globalCrossingSum - pdB.totalScore;
+                            return benefitB - benefitA;
+                        })
+                        .map(([key, predictedData]) => {
+                            const [nodeId, iStr] = key.split('-');
+                            const i = parseInt(iStr, 10);
+                            const node = idToNode[nodeId];
+                            if (!node) return null;
+
+                            const nodeCharsRaw = node.data.chars;
+                            const partnerOrder = manualPartnerOrders[node.id];
+                            const chars = partnerOrder 
+                                ? [...partnerOrder.map(id => nodeCharsRaw.find(c => c.id.toString() === id.toString())).filter(Boolean), ...nodeCharsRaw.filter(c => !partnerOrder.includes(c.id.toString()))]
+                                : nodeCharsRaw;
+                            const charA = chars[i];
+                            const charB = chars[i + 1];
+                            if (!charA || !charB) return null;
+
+                            const localTotal = (crossingCounts[charA.id]?.score ?? 0) + (crossingCounts[charB.id]?.score ?? 0);
+                            const predictedLocal = (predictedData.perCharCounts[charA.id]?.score ?? 0) + (predictedData.perCharCounts[charB.id]?.score ?? 0);
+
+                            const globalImpact = predictedData.totalScore - globalCrossingSum;
+                            const impactColor = globalImpact < 0 ? '#10b981' : (globalImpact > 0 ? '#f43f5e' : '#94a3b8');
+                            const impactSign = globalImpact > 0 ? '+' : '';
+
+                            if (globalImpact === 0 && localTotal === 0 && predictedLocal === 0) return null;
+
+                            const getOriginInfo = (char) => {
+                                const pIds = resolveParentGroupIds(char);
+                                if (pIds && pIds.length > 0) {
+                                    const pNode = idToNode[pIds[0]];
+                                    const getUnitKey = (n) => n.familySubgroup || n.primaryHouse || n.familyCluster;
+                                    if (pNode) return { unit: getUnitKey(pNode.data), tree: pNode.data.familyTreeRootId };
+                                }
+                                return { unit: char['House'] || char['Primary House'] || char.familySubgroup, tree: char.familyTreeRootId };
+                            };
+
+                            const originA = getOriginInfo(charA);
+                            const originB = getOriginInfo(charB);
+
+                            return (
+                                <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(148, 163, 184, 0.1)' }}>
+                                    <div 
+                                        style={{ cursor: 'pointer', flex: 1, paddingRight: '8px' }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            const xA = getCharXGlobal(node.id, charA.id.toString());
+                                            const xB = getCharXGlobal(node.id, charB.id.toString());
+                                            const midX = (xA + xB) / 2;
+                                            if (containerRef.current) {
+                                                containerRef.current.scrollTo({
+                                                    left: (midX + offsetX) * zoom - window.innerWidth / 2,
+                                                    top: (node.y + offsetY) * zoom - window.innerHeight / 2,
+                                                    behavior: 'smooth'
+                                                });
+                                            }
+                                        }}
+                                        title={`Jump to ${charA['First Name']} & ${charB['First Name']}`}
+                                    >
+                                        <div style={{ color: '#f8fafc', fontWeight: 'bold' }}>{charA['First Name']} &times; {charB['First Name']}</div>
+                                        <div style={{ fontSize: '10px', marginTop: '2px', display: 'flex', gap: '8px' }}>
+                                            <span style={{ color: impactColor }}>Global: {globalCrossingSum} &rarr; {predictedData.totalScore} ({impactSign}{globalImpact})</span>
+                                            {localTotal !== predictedLocal && <span style={{ color: '#94a3b8' }}>Local: {localTotal}&rarr;{predictedLocal}</span>}
+                                        </div>
+                                    </div>
+                            <button
+                                        style={{ background: '#f59e0b', color: '#1e1b4b', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '10px' }}
+                                        title="Swap Families"
+                                        onClick={(e) => {
+                                            handleMarriageSwap(e, node.data.familyCluster, originA.unit, originB.unit, String(originA.tree), String(originB.tree));
+                                        }}
+                                    >
+                                        SWAP
+                                    </button>
+                                </div>
+                            );
+                        })}
+                </div>
+            )}
             <svg width={CANVAS_WIDTH * zoom} height={CANVAS_HEIGHT * zoom} className="mx-auto border-none outline-none overflow-hidden">
                 <g style={{ transform: `scale(${zoom})`, transformOrigin: '0 0' }}>
                     {/* Biological parent links */}
@@ -1515,7 +2125,12 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                     {root.descendants().map(node => {
                         if (node.id === 'WORLD_ROOT') return null;
 
-                        const chars = node.data.chars;
+                        const nodeCharsRaw = node.data.chars;
+                        const partnerOrder = manualPartnerOrders[node.id];
+                        const chars = partnerOrder 
+                            ? [...partnerOrder.map(id => nodeCharsRaw.find(c => c.id.toString() === id.toString())).filter(Boolean), ...nodeCharsRaw.filter(c => !partnerOrder.includes(c.id.toString()))]
+                            : nodeCharsRaw;
+
                         const N = chars.length;
                         const W = 190 * N + 20 * (N - 1);
 
@@ -1523,18 +2138,120 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                             <g key={node.id} transform={`translate(${node.x + offsetX},${node.y + offsetY})`}>
                                 {/* Marriage horizontal line between spouses in the cluster */}
                                 {N > 1 && (
-                                    <line
-                                        x1={-W / 2 + 95}
-                                        y1={0}
-                                        x2={W / 2 - 95}
-                                        y2={0}
-                                        className={`${theme.link} opacity-50`}
-                                        strokeWidth={2}
-                                    />
+                                    <g>
+                                        <line
+                                            x1={-W / 2 + 95}
+                                            y1={0}
+                                            x2={W / 2 - 95}
+                                            y2={0}
+                                            className={`${theme.link} opacity-50`}
+                                            strokeWidth={2}
+                                        />
+                                        {chars.slice(0, N - 1).map((charA, i) => {
+                                            const charB = chars[i + 1];
+                                            
+                                            const hasAncestorsA = charA.FatherId || charA.MotherId;
+                                            const hasAncestorsB = charB.FatherId || charB.MotherId;
+                                            if (!hasAncestorsA || !hasAncestorsB) return null;
+
+                                            const xA = getCharXLocal(node, charA.id.toString(), manualPartnerOrders);
+                                            const xB = getCharXLocal(node, charB.id.toString(), manualPartnerOrders);
+                                            const midX = (xA + xB) / 2;
+                                            
+                                            const getUnitKey = (n) => n.familySubgroup || n.primaryHouse || n.familyCluster;
+                                            
+                                            // 1. Resolve Biological Origins (to target ancestral families)
+                                            const getOriginInfo = (char) => {
+                                                const pIds = resolveParentGroupIds(char);
+                                                if (pIds && pIds.length > 0) {
+                                                    const pNode = idToNode[pIds[0]];
+                                                    if (pNode) return { unit: getUnitKey(pNode.data), tree: pNode.data.familyTreeRootId };
+                                                }
+                                                return { unit: char['House'] || char['Primary House'] || char.familySubgroup, tree: char.familyTreeRootId };
+                                            };
+
+                                            const originA = getOriginInfo(charA);
+                                            const originB = getOriginInfo(charB);
+                                            const unitA = originA.unit;
+                                            const unitB = originB.unit;
+                                            const treeA = String(originA.tree);
+                                            const treeB = String(originB.tree);
+                                            const clusterKey = node.data.familyCluster;
+
+                                            const predictedData = potentialCrossingScores[`${node.id}-${i}`];
+
+                                            return (
+                                                <g
+                                                    key={`marriage-swap-${node.id}-${i}`}
+                                                    transform={`translate(${midX - 8}, -8)`}
+                                                    className="cursor-pointer transition-transform hover:scale-110"
+                                                    data-no-pan
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        console.log(`[FamilyTree] Marriage Swap triggered in cluster "${clusterKey}" for node "${node.id}"`);
+                                                        console.log(`[FamilyTree] Parent A: "${charA['First Name']} ${charA['Last Name']}" (Origin: ${unitA}, Tree: ${treeA})`);
+                                                        console.log(`[FamilyTree] Parent B: "${charB['First Name']} ${charB['Last Name']}" (Origin: ${unitB}, Tree: ${treeB})`);
+                                                        
+                                                        // Predict/Log Before/After
+                                                        console.log(`[FamilyTree] Prediction for swap: ${globalCrossingSum} → ${predictedData?.score ?? '?'}`);
+                                                        if (predictedData?.crossings) {
+                                                            console.log(`[FamilyTree] Predicted Crossings Post-Swap (${predictedData.crossings.length}):`, predictedData.crossings);
+                                                        }
+
+                                                        // Prevent camera reset on this update
+                                                        skipRecenterRef.current = true;
+
+                                                        // 1. Swap Ancestor Families (Subgroups) if different
+                                                        handleMarriageSwap(e, clusterKey, unitA, unitB, treeA, treeB);
+                                                    }}
+                                                >
+                                                    {(() => {
+                                                        const predictedData = potentialCrossingScores[`${node.id}-${i}`];
+                                                        if (!predictedData) return null;
+                                                        
+                                                        const predictedLocal = (predictedData.perCharCounts[charA.id]?.score ?? 0) + (predictedData.perCharCounts[charB.id]?.score ?? 0);
+                                                        const localTotal = (crossingCounts[charA.id]?.score ?? 0) + (crossingCounts[charB.id]?.score ?? 0);
+
+                                                        return (
+                                                            <>
+                                                                <title>{`Crossing Prediction for Pair: ${localTotal} → ${predictedLocal}\n\n` +
+                                                                    `Post-Swap Details (${predictedData?.crossings?.length ?? 0} Global Crossings):\n` +
+                                                                    `${(predictedData?.crossings || []).join('\n')}`}</title>
+                                                                <rect x={0} y={0} width={16} height={16} fill="#f59e0b" rx={3} />
+                                                                <path 
+                                                                    d="M4 6h8M12 6l-2-2M12 6l-2 2M12 10H4M4 10l2-2M4 10l2 2" 
+                                                                    stroke="white" 
+                                                                    strokeWidth="1.5" 
+                                                                    fill="none" 
+                                                                    strokeLinecap="round" 
+                                                                    strokeLinejoin="round" 
+                                                                />
+                                                                <g transform="translate(8, 26)">
+                                                                    <rect x="-16" y="-8" width="32" height="12" fill="rgba(15, 23, 42, 0.8)" rx="2" />
+                                                                    <text
+                                                                        textAnchor="middle"
+                                                                        fontSize="7"
+                                                                        fontWeight="bold"
+                                                                        fill={(() => {
+                                                                            const isImproved = predictedLocal < localTotal;
+                                                                            const isWorse = predictedLocal > localTotal;
+                                                                            return isImproved ? "#10b981" : isWorse ? "#f43f5e" : "#94a3b8";
+                                                                        })()}
+                                                                    >
+                                                                        {globalCrossingSum}→{predictedData.totalScore}
+                                                                    </text>
+                                                                </g>
+                                                            </>
+                                                        );
+                                                    })()}
+                                                </g>
+                                            );
+                                        })}
+                                    </g>
                                 )}
 
                                 {chars.map(data => {
-                                    const charXLocal = getCharXLocal(node, data.id.toString());
+                                    const charXLocal = getCharXLocal(node, data.id.toString(), manualPartnerOrders);
                                     const isHighlighted = highlightedCharId === data.id.toString();
                                     const fatherLabel = getParentLabel(data, 'father');
                                     const motherLabel = getParentLabel(data, 'mother');
@@ -1612,25 +2329,48 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                                 />
                                             )}
 
-                                            {/* Character ID */}
-                                            {showDevMetadata && (
-                                                <text x={85} y={15} fill={textSecondary} fontSize={9} fontFamily="monospace" textAnchor="end" opacity={0.8}>
-                                                    #{data.id}
-                                                </text>
-                                            )}
-                                            {showDevMetadata && node.data.blockHierarchyId && (
-                                                <text x={-85} y={15} fill={textSecondary} fontSize={7} fontFamily="monospace" textAnchor="start" opacity={0.75}>
-                                                    {node.data.blockHierarchyId}
-                                                </text>
-                                            )}
+                                            {/* Character ID (Top Right) */}
+                                            <text x={90} y={10} fill={textSecondary} fontSize={9} textAnchor="end" opacity={0.4}>
+                                                #{data.id}
+                                            </text>
 
                                             {/* First Name */}
                                             <text x={0} y={30} fill={textPrimary} fontSize={14} fontWeight="bold" fontFamily="Cinzel, serif" textAnchor="middle">
                                                 {data['First Name']}
                                             </text>
 
+                                            {/* Crossing Score Flag */}
+                                            {(() => {
+                                                const crossingCount = crossingCounts[data.id.toString()];
+                                                if (!crossingCount || crossingCount.score === 0) return null;
+                                                return (
+                                                    <g transform="translate(0,0)" className="cursor-help">
+                                                        <title>{`Logical Crossings: ${crossingCount.score}\n\nCrossing with:\n- ${crossingCount.debug.join('\n- ')}`}</title>
+                                                        <text x={90} y={22} fill="#f59e0b" fontSize={10} fontWeight="bold" textAnchor="end">
+                                                            C:{crossingCount.score}
+                                                        </text>
+                                                    </g>
+                                                );
+                                            })()}
+
+                                            {/* Topo Debug Info */}
+                                            {import.meta.env.DEV && showDevMetadata && (() => {
+                                                const myNodeId = charToGroup[data.id.toString()];
+                                                const nRank = currentNodeRanks.get(myNodeId);
+                                                const pNodeId = resolvePrimaryParentGroupId(data);
+                                                const pRank = currentNodeRanks.get(pNodeId);
+                                                return (
+                                                    <g transform="translate(-90, 115)">
+                                                        <title>{`Topological Rank (Natural / Natural Parent)`}</title>
+                                                        <text fill={textSecondary} fontSize={7} fontFamily="monospace" textAnchor="start" opacity={0.5}>
+                                                            {`nR:${nRank ?? '?'} pR:${pRank ?? '?'}`}
+                                                        </text>
+                                                    </g>
+                                                );
+                                            })()}
+
                                             {/* House / Dynasty */}
-                                            <text x={0} y={45} fill={textSecondary} fontSize={11} letterSpacing={2} textAnchor="middle" textTransform="uppercase">
+                                            <text x={0} y={45} fill={textSecondary} fontSize={11} letterSpacing={2} textAnchor="middle" style={{ textTransform: 'uppercase' }}>
                                                 {data['House']}
                                             </text>
 
@@ -1807,7 +2547,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                     min="0"
                     max="1"
                     step="0.001"
-                    value={scrollRatio}
+                    defaultValue={0}
+                    ref={sliderRef}
                     onChange={handleSliderChange}
                     className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600 dark:bg-gray-700"
                     data-no-pan
