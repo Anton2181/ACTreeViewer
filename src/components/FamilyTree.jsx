@@ -2179,9 +2179,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                             const treeB = String(originB.tree);
                                             const clusterKey = node.data.familyCluster;
 
-                                            const predictedData = potentialCrossingScores[`${node.id}-${i}`];
-
-                                            return (
+                                            {showDevMetadata && (
                                                 <g
                                                     key={`marriage-swap-${node.id}-${i}`}
                                                     transform={`translate(${midX - 8}, -8)`}
@@ -2246,7 +2244,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                                         );
                                                     })()}
                                                 </g>
-                                            );
+                                            )}
                                         })}
                                     </g>
                                 )}
@@ -2341,7 +2339,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                             </text>
 
                                             {/* Crossing Score Flag */}
-                                            {(() => {
+                                            {showDevMetadata && (() => {
                                                 const crossingCount = crossingCounts[data.id.toString()];
                                                 if (!crossingCount || crossingCount.score === 0) return null;
                                                 return (
