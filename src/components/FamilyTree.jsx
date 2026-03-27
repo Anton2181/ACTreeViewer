@@ -2333,10 +2333,47 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                                 #{data.id}
                                             </text>
 
-                                            {/* First Name */}
-                                            <text x={0} y={30} fill={textPrimary} fontSize={14} fontWeight="bold" fontFamily="Cinzel, serif" textAnchor="middle">
-                                                {data['First Name']}
-                                            </text>
+                                            {/* Name and House (Wrapped) */}
+                                            <foreignObject x={-90} y={15} width={180} height={55}>
+                                                <div style={{
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    height: '100%',
+                                                    textAlign: 'center',
+                                                    overflow: 'hidden',
+                                                    lineHeight: '1.2'
+                                                }}>
+                                                    <div style={{
+                                                        color: textPrimary,
+                                                        fontSize: '14px',
+                                                        fontWeight: 'bold',
+                                                        fontFamily: 'Cinzel, serif',
+                                                        width: '100%',
+                                                        overflowWrap: 'break-word',
+                                                        display: '-webkit-box',
+                                                        WebkitLineClamp: 2,
+                                                        WebkitBoxOrient: 'vertical'
+                                                    }}>
+                                                        {data['First Name']}
+                                                    </div>
+                                                    <div style={{
+                                                        color: textSecondary,
+                                                        fontSize: '10px',
+                                                        letterSpacing: '1px',
+                                                        textTransform: 'uppercase',
+                                                        width: '100%',
+                                                        marginTop: '2px',
+                                                        overflowWrap: 'break-word',
+                                                        display: '-webkit-box',
+                                                        WebkitLineClamp: 2,
+                                                        WebkitBoxOrient: 'vertical'
+                                                    }}>
+                                                        {data['House']}
+                                                    </div>
+                                                </div>
+                                            </foreignObject>
 
                                             {/* Crossing Score Flag */}
                                             {showDevMetadata && (() => {
@@ -2368,10 +2405,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                                 );
                                             })()}
 
-                                            {/* House / Dynasty */}
-                                            <text x={0} y={45} fill={textSecondary} fontSize={11} letterSpacing={2} textAnchor="middle" style={{ textTransform: 'uppercase' }}>
-                                                {data['House']}
-                                            </text>
 
 
                                             {/* Born Info */}
@@ -2383,22 +2416,42 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
                                             {/* Father Info */}
                                             {fatherLabel && (
-                                                <>
-                                                    <text x={-20} y={90} fill="#3b82f6" fontSize={9} textAnchor="end" fontWeight="500" opacity={0.8}>F:</text>
-                                                    <text x={-15} y={90} fill={textPrimary} fontSize={9} fontWeight="bold" textAnchor="start">
-                                                        {fatherLabel.length > 18 ? fatherLabel.substring(0, 15) + '...' : fatherLabel}
-                                                    </text>
-                                                </>
+                                                <g transform="translate(-85, 82)">
+                                                    <text x={0} y={9} fill="#3b82f6" fontSize={9} fontWeight="500" opacity={0.8}>F:</text>
+                                                    <foreignObject x={15} y={0} width={155} height={14}>
+                                                        <div style={{
+                                                            color: textPrimary,
+                                                            fontSize: '9px',
+                                                            fontWeight: 'bold',
+                                                            whiteSpace: 'nowrap',
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            width: '100%'
+                                                        }}>
+                                                            {fatherLabel}
+                                                        </div>
+                                                    </foreignObject>
+                                                </g>
                                             )}
 
                                             {/* Mother Info */}
                                             {motherLabel && (
-                                                <>
-                                                    <text x={-20} y={105} fill="#e11d48" fontSize={9} textAnchor="end" fontWeight="500" opacity={0.8}>M:</text>
-                                                    <text x={-15} y={105} fill={textPrimary} fontSize={9} fontWeight="bold" textAnchor="start">
-                                                        {motherLabel.length > 18 ? motherLabel.substring(0, 15) + '...' : motherLabel}
-                                                    </text>
-                                                </>
+                                                <g transform="translate(-85, 97)">
+                                                    <text x={0} y={9} fill="#e11d48" fontSize={9} fontWeight="500" opacity={0.8}>M:</text>
+                                                    <foreignObject x={15} y={0} width={155} height={14}>
+                                                        <div style={{
+                                                            color: textPrimary,
+                                                            fontSize: '9px',
+                                                            fontWeight: 'bold',
+                                                            whiteSpace: 'nowrap',
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            width: '100%'
+                                                        }}>
+                                                            {motherLabel}
+                                                        </div>
+                                                    </foreignObject>
+                                                </g>
                                             )}
                                         </g>
                                     );
