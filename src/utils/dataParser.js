@@ -1,31 +1,43 @@
 import Papa from 'papaparse';
 import { buildTestFamilyCharacters } from './testFamilyData';
 
-// Google Sheets CSV publish link
-const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1WKSeqB1yX91A2TyD9Lie-mwNkc4qLIrN-pIPbX2knac/export?format=csv&gid=0";
+// Google Sheets CSV publish links
+const CHARACTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/1WKSeqB1yX91A2TyD9Lie-mwNkc4qLIrN-pIPbX2knac/export?format=csv&gid=0";
+const YEAR_SHEET_URL = "https://docs.google.com/spreadsheets/d/1QpAlKSJKM2RfI47KnTf1M5lF-qBa5e8SrZV0vf1J2UU/export?format=csv&gid=2101836998";
 
 export const fetchAndParseData = async () => {
     try {
-        const response = await fetch(SHEET_CSV_URL);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const csvData = await response.text();
+        const [charResponse, yearResponse] = await Promise.all([
+            fetch(CHARACTER_SHEET_URL),
+            fetch(YEAR_SHEET_URL)
+        ]);
+
+        if (!charResponse.ok) throw new Error(`Char HTTP error! status: ${charResponse.status}`);
+        if (!yearResponse.ok) throw new Error(`Year HTTP error! status: ${yearResponse.status}`);
+
+        const [csvData, yearCsvData] = await Promise.all([
+            charResponse.text(),
+            yearResponse.text()
+        ]);
 
         return new Promise((resolve, reject) => {
+            // 1. Parse Year first (it's simpler)
+            const yearResults = Papa.parse(yearCsvData, { header: false, skipEmptyLines: true });
+            let currentYear = "94 DV";
+            if (yearResults.data.length > 0) {
+                // Cell B1 is row 0, index 1
+                currentYear = yearResults.data[0][1] || currentYear;
+            }
+
+            // 2. Parse Characters
             Papa.parse(csvData, {
-                header: false, // Parse as arrays first to find the real header
+                header: false,
                 skipEmptyLines: true,
                 complete: (results) => {
-                    const rawData = results.data;
-                    let currentYear = "94 DV";
-                    if (rawData.length > 0 && rawData[0][0] === 'Current Year:') {
-                        currentYear = rawData[0][1];
-                    }
                     resolve({
                         year: currentYear,
                         characters: [
-                            ...processParsedData(rawData),
+                            ...processParsedData(results.data),
                             ...(import.meta.env.DEV ? buildTestFamilyCharacters() : [])
                         ]
                     });

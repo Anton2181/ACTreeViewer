@@ -1228,8 +1228,12 @@ const calculateCrossings = (rootNode, nodeMap, resolveParentGroupIds) => {
     return { totalScore: Math.floor(totalCrossingScore), perCharCounts, crossings: crossingPairs.sort(), nodeRanks, charRanks };
 };
 
-const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
+const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger, currentYear }) => {
     const { theme } = useTheme();
+    const currentYearNum = useMemo(() => {
+        const match = currentYear?.toString().match(/\d+/);
+        return match ? parseInt(match[0], 10) : 94;
+    }, [currentYear]);
     const [manualTreeOrders, setManualTreeOrders] = useState({});
     const [manualSubgroupOrders, setManualSubgroupOrders] = useState({});
     const [manualPartnerOrders, setManualPartnerOrders] = useState({});
@@ -2254,16 +2258,22 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
                                     const isHighlighted = highlightedCharId === data.id.toString();
                                     const fatherLabel = getParentLabel(data, 'father');
                                     const motherLabel = getParentLabel(data, 'mother');
-                                    const sexColor = data['Sex']?.toLowerCase().startsWith('f') ? '#fb7185' :
+
+                                    const dob = parseInt(data['Year of Birth'], 10);
+                                    const age = parseInt(data['Age'], 10);
+                                    const dod = (dob && age) ? dob + age : null;
+                                    const isDead = dod !== null && dod < currentYearNum;
+
+                                    const sexColor = isDead ? '#94a3b8' : (data['Sex']?.toLowerCase().startsWith('f') ? '#fb7185' :
                                         data['Sex']?.toLowerCase().startsWith('m') ? '#60a5fa' :
-                                            '#9ca3af';
+                                            '#9ca3af');
 
                                     // Theme colors mapping to hex for SVG compatibility
                                     const isDark = theme.current === 'dark';
-                                    const cardFill = isDark ? '#1e293b' : '#f8fafc';
-                                    const strokeColor = isDark ? '#334155' : '#cbd5e1';
-                                    const textPrimary = isDark ? '#f1f5f9' : '#0f172a';
-                                    const textSecondary = isDark ? '#94a3b8' : '#475569';
+                                    const cardFill = isDead ? (isDark ? '#0f172a' : '#e2e8f0') : (isDark ? '#1e293b' : '#f8fafc');
+                                    const strokeColor = isDead ? (isDark ? '#1e293b' : '#cbd5e1') : (isDark ? '#334155' : '#cbd5e1');
+                                    const textPrimary = isDead ? (isDark ? '#64748b' : '#475569') : (isDark ? '#f1f5f9' : '#0f172a');
+                                    const textSecondary = isDead ? (isDark ? '#475569' : '#94a3b8') : (isDark ? '#94a3b8' : '#475569');
                                     const highlightStroke = '#facc15';
 
                                     return (
@@ -2407,10 +2417,10 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger }) => {
 
 
 
-                                            {/* Born Info */}
-                                            <text x={-20} y={75} fill={textSecondary} fontSize={9} textAnchor="end" fontWeight="500">Born:</text>
+                                            {/* Life Info */}
+                                            <text x={-20} y={75} fill={textSecondary} fontSize={9} textAnchor="end" fontWeight="500">{isDead ? 'Lived:' : 'Born:'}</text>
                                             <text x={-15} y={75} fill={textPrimary} fontSize={10} fontWeight="bold" textAnchor="start">
-                                                {data['Year of Birth'] || '?'}
+                                                {isDead ? `${dob} - ${dod} DV` : (data['Year of Birth'] || '?')}
                                                 <tspan fill={textSecondary} fontSize={8} fontWeight="normal"> (Age {data['Age'] || '?'})</tspan>
                                             </text>
 

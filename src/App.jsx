@@ -491,7 +491,7 @@ function App() {
 
         {!loading && !error && filteredData.length > 0 && (
           <div className={`absolute inset-0 transition-opacity duration-200 ${activeTab === 'tree' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
-            <FamilyTree data={filteredData} allData={data} onFilterHouse={toggleHouse} recenterTrigger={recenterTrigger} />
+            <FamilyTree data={filteredData} allData={data} onFilterHouse={toggleHouse} recenterTrigger={recenterTrigger} currentYear={currentYear} />
           </div>
         )}
 
