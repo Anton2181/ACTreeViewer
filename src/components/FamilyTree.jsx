@@ -1524,7 +1524,7 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger, currentYear
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
-    const [highlightedCharId, setHighlightedCharId] = useState(null);
+
 
     // Auto-minimize on initial data load
     useEffect(() => {
@@ -1695,17 +1695,18 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger, currentYear
             return;
         }
 
-        const char = res;
-        setHighlightedCharId(char.id.toString());
+        if (res.id) {
+            scrollToCharRef.current = res.id.toString();
+        }
         setSearchQuery('');
         setSearchResults([]);
         setIsSearchOpen(false);
 
         // Calculate global coordinates of the selected character
-        const parentGroupId = charToGroup[char.id.toString()];
+        const parentGroupId = charToGroup[res.id.toString()];
         if (!parentGroupId) return;
 
-        const charXGlobal = getCharXGlobal(parentGroupId, char.id.toString());
+        const charXGlobal = getCharXGlobal(parentGroupId, res.id.toString());
         const parentGroupNode = idToNode[parentGroupId];
         if (!parentGroupNode) return;
         const charYGlobal = parentGroupNode.y;
@@ -2255,7 +2256,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger, currentYear
 
                                 {chars.map(data => {
                                     const charXLocal = getCharXLocal(node, data.id.toString(), manualPartnerOrders);
-                                    const isHighlighted = highlightedCharId === data.id.toString();
                                     const fatherLabel = getParentLabel(data, 'father');
                                     const motherLabel = getParentLabel(data, 'mother');
 
@@ -2274,7 +2274,6 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger, currentYear
                                     const strokeColor = isDead ? (isDark ? '#1e293b' : '#cbd5e1') : (isDark ? '#334155' : '#cbd5e1');
                                     const textPrimary = isDead ? (isDark ? '#64748b' : '#475569') : (isDark ? '#f1f5f9' : '#0f172a');
                                     const textSecondary = isDead ? (isDark ? '#475569' : '#94a3b8') : (isDark ? '#94a3b8' : '#475569');
-                                    const highlightStroke = '#facc15';
 
                                     return (
                                         <g
@@ -2298,8 +2297,8 @@ const FamilyTree = ({ data, allData, onFilterHouse, recenterTrigger, currentYear
                                                 height={120}
                                                 rx={12}
                                                 fill={cardFill}
-                                                stroke={isHighlighted ? highlightStroke : strokeColor}
-                                                strokeWidth={isHighlighted ? 4 : 1}
+                                                stroke={strokeColor}
+                                                strokeWidth={1}
                                                 className="transition-all duration-300"
                                             />
 
